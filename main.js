@@ -21,7 +21,6 @@ async function runLogin(page, acc) {
 
   await page.click('button[type="submit"]');
 
-  // 🔽 ここ追加（重要）
   await page.waitForLoadState('networkidle');
 
   const url = page.url();
@@ -31,6 +30,13 @@ async function runLogin(page, acc) {
     console.log(`❌ ログイン失敗の可能性: ${acc.name}`);
   } else {
     console.log(`✅ ログイン成功: ${acc.name}`);
+
+    // 🔽 ここから追加（募集管理へ移動）
+    await page.goto('https://kanri.hitomgr.jp/recruitments');
+
+    await page.waitForTimeout(5000);
+
+    console.log(`📄 募集管理ページを開いた: ${acc.name}`);
   }
 
   await page.waitForTimeout(3000);

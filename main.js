@@ -16,16 +16,24 @@ const accounts = [
 async function runLogin(page, acc) {
   await page.goto('https://kanri.hitomgr.jp/lwf3/login');
 
-  // ID入力（ここは後で調整あり）
   await page.fill('input[name="login_id"]', acc.id);
-
-  // パス入力
   await page.fill('input[name="password"]', acc.pass);
 
-  // ログインボタン
   await page.click('button[type="submit"]');
 
-  await page.waitForTimeout(5000);
+  // 🔽 ここ追加（重要）
+  await page.waitForLoadState('networkidle');
+
+  const url = page.url();
+  console.log(`ログイン後URL: ${url}`);
+
+  if (url.includes('login')) {
+    console.log(`❌ ログイン失敗の可能性: ${acc.name}`);
+  } else {
+    console.log(`✅ ログイン成功: ${acc.name}`);
+  }
+
+  await page.waitForTimeout(3000);
 }
 
 (async () => {

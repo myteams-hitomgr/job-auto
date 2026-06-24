@@ -28,18 +28,24 @@ async function runLogin(page, acc) {
 
   if (url.includes('login')) {
     console.log(`❌ ログイン失敗の可能性: ${acc.name}`);
-  } else {
-    console.log(`✅ ログイン成功: ${acc.name}`);
-
-    // 🔽 ここから追加（募集管理へ移動）
-    await page.goto('https://kanri.hitomgr.jp/recruitments');
-
-    await page.waitForTimeout(5000);
-
-    console.log(`📄 募集管理ページを開いた: ${acc.name}`);
+    return;
   }
 
-  await page.waitForTimeout(3000);
+  console.log(`✅ ログイン成功: ${acc.name}`);
+
+  // 募集管理へ移動
+  await page.goto('https://kanri.hitomgr.jp/recruitments');
+
+  // ⭐ 追加：スクショ保存
+  await page.screenshot({
+    path: `recruitments_${acc.name}.png`,
+    fullPage: true
+  });
+
+  console.log(`📸 スクショ保存完了: ${acc.name}`);
+
+  // 少し待機（更新反映用）
+  await page.waitForTimeout(5000);
 }
 
 (async () => {

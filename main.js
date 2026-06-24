@@ -1,2 +1,12 @@
-console.log("自動実行スタート");
-console.log("GitHub Actions 動作確認OK");
+const accounts = [
+  {
+    id: process.env.HITOMGR_ID_A,
+    pass: process.env.HITOMGR_PASSWORD,
+    name: "A"
+  },
+  {
+    id: process.env.HITOMGR_ID_B,
+    pass: process.env.HITOMGR_PASSWORD,
+    name: "B"
+  }
+];

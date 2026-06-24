@@ -21,7 +21,8 @@ async function runLogin(page, acc) {
 
   await page.click('button[type="submit"]');
 
-  await page.waitForLoadState('networkidle');
+  // ❗ networkidleやめる（ここ修正）
+  await page.waitForTimeout(3000);
 
   const url = page.url();
   console.log(`ログイン後URL: ${url}`);
@@ -36,7 +37,10 @@ async function runLogin(page, acc) {
   // 募集管理へ移動
   await page.goto('https://kanri.hitomgr.jp/recruitments');
 
-  // ⭐ 追加：スクショ保存
+  // ❗ 画面安定待ち
+  await page.waitForTimeout(3000);
+
+  // スクショ
   await page.screenshot({
     path: `recruitments_${acc.name}.png`,
     fullPage: true
@@ -44,8 +48,7 @@ async function runLogin(page, acc) {
 
   console.log(`📸 スクショ保存完了: ${acc.name}`);
 
-  // 少し待機（更新反映用）
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(3000);
 }
 
 (async () => {

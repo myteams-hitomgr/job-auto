@@ -2,7 +2,7 @@ name: job-auto
 
 on:
   schedule:
-    - cron: '0 */3 * * *'  # 3時間ごと
+    - cron: '0 */3 * * *'
   workflow_dispatch:
 
 jobs:
@@ -26,9 +26,9 @@ jobs:
 
       - name: Run script
         run: node main.js
-        
-        - name: Upload screenshots
-  uses: actions/upload-artifact@v4
-  with:
-    name: screenshots
-    path: "*.png"
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: "*.png"

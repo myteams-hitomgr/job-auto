@@ -1,0 +1,28 @@
+name: job-auto
+
+on:
+  schedule:
+    - cron: '0 */3 * * *'  # 3時間ごと
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: npm install playwright
+
+      - name: Install browsers
+        run: npx playwright install
+
+      - name: Run script
+        run: node main.js

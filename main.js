@@ -66,7 +66,6 @@ function getTargetDates() {
   };
 }
 
-// 📄 【共通】3990件のデータからパターン1とパターン2のCSVを生成するコア関数
 function generatePatternFiles(headerLine, targetRows, basePath, accountName, label) {
   const idxA = colNameToIndex('A');
   const idxB = colNameToIndex('B');
@@ -74,7 +73,6 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
   const idxD = colNameToIndex('D');
   const idxK = colNameToIndex('K');
 
-  // --- パターン1生成（2019/2020/非掲載） ---
   const pattern1Rows = targetRows.map(orgRow => {
     const row = [...orgRow];
     const rawB = row[idxB].replace(/"/g, '').trim();
@@ -93,7 +91,6 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
   fs.writeFileSync(path1, [headerLine, ...pattern1Rows.map(toCSVLine)].join('\n'), 'utf8');
   console.log(`✅ 【${accountName}】【${label}】パターン1 CSV保存完了: ${path1}`);
 
-  // --- パターン2生成（本日日付/10年先/掲載/K列ローテーション） ---
   const dates = getTargetDates();
   const pattern2BaseRows = targetRows.map(orgRow => {
     const row = [...orgRow];
@@ -121,7 +118,6 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
   return { path1, path2 };
 }
 
-// ⚙️ CSVの全行程加工を振り分けるメイン関数
 function processCSVFile(filePath, accountName) {
   if (!fs.existsSync(filePath)) {
     console.log(`⚠️ 【${accountName}】ファイルが見つかりません: ${filePath}`);
@@ -133,12 +129,11 @@ function processCSVFile(filePath, accountName) {
   const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
   if (lines.length <= 1) return null;
 
-  const headerLine = lines[0]; // 1行目の項目名をそのまま維持
+  const headerLine = lines[0];
   const idxB = colNameToIndex('B');
   const idxGG = colNameToIndex('GG');
   const idxGH = colNameToIndex('GH');
 
-  // 全行を配列にパース
   const allRows = [];
   for (let i = 1; i < lines.length; i++) {
     const row = parseCSVLine(lines[i]);
@@ -146,9 +141,6 @@ function processCSVFile(filePath, accountName) {
     allRows.push(row);
   }
 
-  // ==========================================
-  // 処理A：【通常版】のフィルタ・ソートロジック
-  // ==========================================
   const normalFiltered = allRows.filter(row => {
     const valGG = row[idxGG].replace(/"/g, '').trim();
     const valGH = row[idxGH].replace(/"/g, '').trim();
@@ -161,9 +153,6 @@ function processCSVFile(filePath, accountName) {
   const normalTargetRows = normalFiltered.slice(0, 3990);
   const normalFiles = generatePatternFiles(headerLine, normalTargetRows, filePath, accountName, 'normal');
 
-  // ==========================================
-  // 処理B：【PV版】のソートロジック
-  // ==========================================
   const pvSorted = [...allRows].sort((x, y) => {
     const valX = parseFloat(x[idxGH].replace(/"/g, '').trim()) || 0;
     const valY = parseFloat(y[idxGH].replace(/"/g, '').trim()) || 0;
@@ -171,17 +160,14 @@ function processCSVFile(filePath, accountName) {
   });
 
   const pvSliced = pvSorted.slice(0, 3990);
-
   pvSliced.sort((x, y) => new Date(x[idxB].replace(/"/g, '').trim()) - new Date(y[idxB].replace(/"/g, '').trim()));
   const pvFiles = generatePatternFiles(headerLine, pvSliced, filePath, accountName, 'pv');
 
   return { normal: normalFiles, pv: pvFiles };
 }
 
-// 🌟 確定版：メニューの矢印をホバーして「取込ファイル一覧」を開く
 async function uploadCSVFile(page, acc, fileToUpload) {
   console.log(`👉 【${acc.name}】上部メニューの矢印ボタンにマウスを乗せます...`);
-  // 画像から判明した上部白抜き矢印の構造（面接カレンダーの隣にあるリスト要素）を確実にホバー
   const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
   await menuHoverIcon.hover();
   await page.waitForTimeout(1500);
@@ -201,7 +187,6 @@ async function uploadCSVFile(page, acc, fileToUpload) {
   await page.waitForTimeout(8000);
 }
 
-// 🌟 確定版：メニューの矢印をホバーして「取込ファイル一覧」の状況を追う
 async function waitForImportSuccess(page, acc, label) {
   console.log(`👉 【${acc.name}】取込状況を確認するため、メニューの矢印から「取込ファイル一覧」を再開きます...`);
   const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
@@ -210,19 +195,26 @@ async function waitForImportSuccess(page, acc, label) {
   await page.locator('a:has-text("取込ファイル一覧")').first().click();
   await page.waitForLoadState('networkidle').catch(() => {});
 
-  console.log(`⏳ 【${acc.name}】[${label}] 取込完了（ステータス: 完了 / 詳細: 成功）を無限待機中（画面自動更新待ち）...`);
+  console.log(`⏳ 【${acc.name}】[${label}] 取込完了（ステータス: 完了 / 詳細: 成功）を監視中...`);
   
   let loopCount = 1;
   while (true) { 
+    // 「最新を表示する」ボタンがあればクリックして画面を最新化
+    const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
+    if (await refreshBtn.isVisible().catch(() => false)) {
+      await refreshBtn.click().catch(() => {});
+    } else {
+      await page.reload().catch(() => {}); // なければページ丸ごとリロード
+    }
     await page.waitForTimeout(5000); 
+
     const firstRowText = await page.locator('table tr').nth(1).innerText().catch(() => '');
-    
     if (firstRowText.includes('完了') && firstRowText.includes('成功')) {
       console.log(`✅ 【${acc.name}】[${label}] 取込が正常に「完了・成功」しました！`);
       break;
     } else {
       if (loopCount % 6 === 0) {
-        console.log(`⏳ 【${acc.name}】[${label}] 自動更新中... 取込完了を待っています。`);
+        console.log(`⏳ 【${acc.name}】[${label}] 最新状況に更新しながら、完了を待っています...`);
       }
     }
     loopCount++;
@@ -240,14 +232,12 @@ async function runLoginAndProcess(browser, acc) {
   });
 
   try {
-    // 1. ログイン
     await page.goto(acc.url, { waitUntil: 'networkidle' }); 
     await page.locator('input[type="text"], input[type="email"], input[name*="login"]').first().fill(acc.id);
     await page.locator('input[type="password"]').first().fill(acc.password);
     await page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    // 2. 募集管理（ファイル取出予約）※全求人ダウンロード
     const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
     await page.goto(recruitUrl, { waitUntil: 'networkidle' });
 
@@ -257,7 +247,6 @@ async function runLoginAndProcess(browser, acc) {
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
-    // 3. 確定版：矢印メニューをホバーして「取出ファイル一覧」へ移動
     console.log(`👉 【${acc.name}】上部メニューの矢印ボタンにマウスを乗せます...`);
     const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
     await menuHoverIcon.hover(); 
@@ -267,51 +256,52 @@ async function runLoginAndProcess(browser, acc) {
     await page.locator('a:has-text("取出ファイル一覧")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    console.log(`⏳ 【${acc.name}】CSV抽出の完了を無限待機中（画面自動更新待ち）...`);
+    console.log(`⏳ 【${acc.name}】CSV抽出の完了を無限待機中（5秒おきに最新表示ボタンを押します）...`);
     let loopCount = 1;
     while (true) {
+      // 🔥 追加：5秒ごとに「最新を表示する」ボタンをクリックして画面を更新！
+      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
+      if (await refreshBtn.isVisible().catch(() => false)) {
+        await refreshBtn.click().catch(() => {});
+      } else {
+        await page.reload().catch(() => {});
+      }
       await page.waitForTimeout(5000);
+
       const rowText = await page.locator('table tr').nth(1).innerText().catch(() => '');
       if (rowText.includes('完了')) {
         console.log(`✅ 【${acc.name}】CSV抽出が「完了」しました！`);
         break;
       }
       if (loopCount % 6 === 0) {
-        console.log(`⏳ 【${acc.name}】自動更新中... 抽出完了を待っています。`);
+        console.log(`⏳ 【${acc.name}】画面更新しながら抽出完了を待っています...`);
       }
       loopCount++;
     }
 
-    // 4. CSVダウンロード
     const downloadLink = page.locator('table tr').nth(1).locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
     const [download] = await Promise.all([page.waitForEvent('download'), downloadLink.click()]);
     const downloadPath = path.join(__dirname, `${acc.name}_raw_data.csv`);
     await download.saveAs(downloadPath);
 
-    // 5. データ内部加工
     const processed = processCSVFile(downloadPath, acc.name);
     if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 
     // ========================================================
-    // 🔥 パターンA：1周で【4つのタスク】をすべて実行するメインフェーズ
+    // 4つの連続タスク
     // ========================================================
-    
-    // 【タスク①】通常版：非掲載求人のアップロード
     console.log(`🔷 【${acc.name}】タスク① [通常版・非掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.normal.path1);
     await waitForImportSuccess(page, acc, '通常版・非掲載');
 
-    // 【タスク②】通常版：掲載求人のアップロード
     console.log(`🔷 【${acc.name}】タスク② [通常版・掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.normal.path2);
     await page.waitForTimeout(5000); 
     
-    // 【タスク③】PV版：非掲載求人のアップロード
     console.log(`🔶 【${acc.name}】タスク③ [PV版・非掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.pv.path1);
     await waitForImportSuccess(page, acc, 'PV版・非掲載');
 
-    // 【タスク④】PV版：掲載求人のアップロード
     console.log(`🔶 【${acc.name}】タスク④ [PV版・掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.pv.path2);
     await page.waitForTimeout(8000); 

@@ -178,7 +178,7 @@ function processCSVFile(filePath, accountName) {
   return { normal: normalFiles, pv: pvFiles };
 }
 
-// 🌟 【メニュー対応修正】矢印をホバーして「取込ファイル一覧（移動先）」を選択してアップロード画面を出す関数
+// 🌟 矢印をホバーして「取込ファイル一覧」を選択してアップロード画面を出す関数
 async function uploadCSVFile(page, acc, fileToUpload) {
   console.log(`👉 【${acc.name}】上部メニューの矢印アイコンにマウスを乗せます...`);
   const menuHoverIcon = page.locator('.nav-tabs .fa-refresh, .nav-tabs img, li:has(ul) .fa-angle-down, a:has(.fa-refresh), .dropdown-toggle').first();
@@ -200,7 +200,7 @@ async function uploadCSVFile(page, acc, fileToUpload) {
   await page.waitForTimeout(8000);
 }
 
-// 🌟 【メニュー対応修正】矢印をホバーして「取込ファイル一覧」を再表示し、状況を追う関数
+// 🌟 矢印をホバーして「取込ファイル一覧」を再表示し、状況を追う関数
 async function waitForImportSuccess(page, acc, label) {
   console.log(`👉 【${acc.name}】取込状況を確認するため、メニューの矢印から「取込ファイル一覧」を再開きます...`);
   const menuHoverIcon = page.locator('.nav-tabs .fa-refresh, .nav-tabs img, li:has(ul) .fa-angle-down, a:has(.fa-refresh), .dropdown-toggle').first();
@@ -256,7 +256,7 @@ async function runLoginAndProcess(browser, acc) {
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
-    // 3. 【修正項目】矢印メニューをホバーして「取出ファイル一覧」へ移動
+    // 3. 【元の正しいボタンへ】矢印メニューをホバーして「取出ファイル一覧」へ移動
     console.log(`👉 【${acc.name}】上部メニューの矢印アイコンにマウスを乗せます...`);
     const menuHoverIcon = page.locator('.nav-tabs .fa-refresh, .nav-tabs img, li:has(ul) .fa-angle-down, a:has(.fa-refresh), .dropdown-toggle').first();
     await menuHoverIcon.hover(); 

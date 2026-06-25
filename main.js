@@ -6,15 +6,19 @@ const accounts = [
 ];
 
 async function runLogin(page, acc) {
-  await page.goto('https://hitomgr.jp/b/login'); // 実際のURLに合わせて適宜変更してください
+  // ログイン画面へ移動
+  await page.goto('https://hitomgr.jp/b/login'); 
 
-  await page.fill('input[type="text"]', acc.id);
-  await page.fill('input[type="password"]', acc.password);
+  // 💡 ヒトマネジャーの実際の入力欄（name="login_id" と name="password"）に修正しました
+  await page.fill('input[name="login_id"]', acc.id);
+  await page.fill('input[name="password"]', acc.password);
 
+  // ログインボタンをクリック
   await page.click('button[type="submit"]');
 
   await page.waitForTimeout(5000);
 
+  // スクショを保存
   await page.screenshot({ path: `${acc.name}.png`, fullPage: true });
   console.log(`📸 スクショ保存完了: ${acc.name}`);
 

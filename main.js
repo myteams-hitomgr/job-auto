@@ -42,16 +42,15 @@ async function runLoginAndProcess(browser, acc) {
     console.log(`【${acc.name}】ログインボタンをクリックしました。トップページの読み込みを待機中...`);
 
     // 2. ログイン後のトップページ（募集管理ボタンがある画面）が表示されるのを待つ
-    // 「募集管理」の文字が含まれるボタンやリンクを探します
     const recruitMenuLocator = page.locator('a:has-text("募集管理"), div:has-text("募集管理"), button:has-text("募集管理")').first();
     await recruitMenuLocator.waitFor({ state: 'visible', timeout: 30000 });
 
     // ログイン直後のスクショを保存
     await page.screenshot({ path: `${acc.name}_login_success.png`, fullPage: true });
 
-    // 3. 募集管理をクリック！
-    console.log(`👉 【${acc.name}】「募集管理」をクリックします`);
-    await recruitMenuLocator.click();
+    // 3. 募集管理をクリック！ (force: true を追加してポップアップの妨害を回避)
+    console.log(`👉 【${acc.name}】「募集管理」をクリックします（妨害カバー回避モード）`);
+    await recruitMenuLocator.click({ force: true });
 
     // 遷移後の読み込みを少し待つ
     await page.waitForTimeout(5000);

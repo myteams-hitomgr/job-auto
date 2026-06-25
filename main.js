@@ -25,18 +25,18 @@ async function runLoginAndProcess(browser, acc) {
     // ログイン画面へ移動
     await page.goto(acc.url, { waitUntil: 'networkidle' }); 
 
-    // 💡 ログインボックス（または入力欄）が画面に現れるまで最大15秒待ちます
-    await page.waitForSelector('input', { timeout: 15000 });
+    // 💡 ユーザーIDとパスワードの入力欄（隠し属性ではないもの）が表示されるまで待機
+    await page.waitForSelector('input[type="text"], input[type="email"], input:not([type="hidden"])', { timeout: 15000 });
 
-    // 画面内にあるすべての入力欄を取得
-    const inputs = page.locator('input');
+    // 💡 ユーザーID入力欄とパスワード入力欄をそれぞれ個別にピンポイント特定
+    const idInput = page.locator('input[type="text"], input[type="email"], input[name*="login"], input[name*="id"]').first();
+    const passwordInput = page.locator('input[type="password"]').first();
     
-    // 💡 画像で確認した「中央の白いログイン窓」にあるIDとパスワード入力欄に直接入力
-    // 通常、1番目がID、2番目がパスワードになります
-    await inputs.nth(0).fill(acc.id);
-    await inputs.nth(1).fill(acc.password);
+    // 値を流し込む
+    await idInput.fill(acc.id);
+    await passwordInput.fill(acc.password);
 
-    // 青い「ログイン」ボタンを確実に特定してクリック
+    // 青い「ログイン」ボタンをクリック
     const submitButton = page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first();
     await submitButton.click();
 

@@ -1,54 +1,68 @@
 const { chromium } = require('playwright');
 
 const accounts = [
-  { name: 'A', id: process.env.HITOMGR_ID_M003, password: process.env.HITOMGR_PASSWORD_PASSU003 },
-  { name: 'B', id: process.env.HITOMGR_ID_U003, password: process.env.HITOMGR_PASSWORD_PASSU003 }
+  { 
+    name: 'A', 
+    url: 'https://kanri.hitomgr.jp/72s3/login/', 
+    id: process.env.HITOMGR_ID_M003, 
+    password: process.env.HITOMGR_PASSWORD_PASSU003 
+  },
+  { 
+    name: 'B', 
+    url: 'https://kanri.hitomgr.jp/lwf3/login/', 
+    id: process.env.HITOMGR_ID_U003, 
+    password: process.env.HITOMGR_PASSWORD_PASSU003 
+  }
 ];
 
-async function runLogin(page, acc) {
-  // ログイン画面へ移動
-  await page.goto('https://hitomgr.jp/b/login', { waitUntil: 'networkidle' }); 
+async function runLoginAndProcess(browser, acc) {
+  // 💡 アカウントごとに「完全に独立したクッキー・セッション環境（シークレット窓）」を作成
+  const context = await browser.newContext();
+  const page = await context.newPage();
 
-  // 💡 【超強力修正】名前に頼らず、画面内の「1番目の入力欄」と「2番目の入力欄」を直接指定します
-  const inputs = page.locator('input');
-  
-  // 1番目の入力欄にIDを入力
-  await inputs.nth(0).fill(acc.id);
-  // 2番目の入力欄にパスワードを入力
-  await inputs.nth(1).fill(acc.password);
+  console.log(`【${acc.name}】処理開始 - URL: ${acc.url}`);
 
-  // ログインボタン（または送信タイプのボタン）をクリック
-  const submitButton = page.locator('button, input[type="submit"], input[type="image"]').first();
-  await submitButton.click();
+  try {
+    // ログイン画面へ移動
+    await page.goto(acc.url, { waitUntil: 'networkidle' }); 
 
-  await page.waitForTimeout(5000);
+    // 画面内の入力欄（input）をすべて取得
+    const inputs = page.locator('input');
+    
+    // 1番目の入力欄にID、2番目の入力欄にパスワードを入力
+    await inputs.nth(0).fill(acc.id);
+    await inputs.nth(1).fill(acc.password);
 
-  // スクショを保存
-  await page.screenshot({ path: `${acc.name}.png`, fullPage: true });
-  console.log(`📸 スクショ保存完了: ${acc.name}`);
+    // ログインボタンをクリック
+    const submitButton = page.locator('button, input[type="submit"], .btn, #login_btn').first();
+    await submitButton.click();
 
-  await page.waitForTimeout(3000);
+    // ログイン後の遷移・自動更新のための待機（必要に応じて調整してください）
+    await page.waitForTimeout(5000);
+
+    // ログイン成功時のスクショを保存
+    await page.screenshot({ path: `${acc.name}_success.png`, fullPage: true });
+    console.log(`📸 【${acc.name}】スクショ保存完了`);
+
+  } catch (error) {
+    console.log(`⚠️ 【${acc.name}】エラーが発生しました。現在の画面を保存します。`);
+    await page.screenshot({ path: `error_${acc.name}.png`, fullPage: true });
+    throw error;
+  } finally {
+    // 処理が終わったらそのアカウントの環境を閉じる
+    await context.close();
+  }
 }
 
 (async () => {
   const browser = await chromium.launch();
 
-  for (const acc of accounts) {
-    const page = await browser.newPage();
-
-    console.log(`ログイン開始: ${acc.name}`);
-
-    try {
-      await runLogin(page, acc);
-    } catch (error) {
-      // エラーが起きても途中で止めず、何が起きたかスクショを撮って残す
-      console.log(`⚠️ エラーが発生しました。現在の画面を保存します: ${acc.name}`);
-      await page.screenshot({ path: `error_${acc.name}.png`, fullPage: true });
-      throw error;
-    }
-
-    await page.close();
-    console.log(`完了: ${acc.name}`);
+  // 💡 Promise.all を使い、アカウントAとBの処理を「完全に同時並行」で実行します！
+  // これでお互いのログインを邪魔しません。
+  try {
+    await Promise.all(accounts.map(acc => runLoginAndProcess(browser, acc)));
+  } catch (e) {
+    console.log("一部のアカウントでエラーが発生しましたが、処理を終了します。");
   }
 
   // ログ出力用コード

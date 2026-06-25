@@ -152,13 +152,11 @@ function processCSVFile(filePath, accountName) {
   const normalFiltered = allRows.filter(row => {
     const valGG = row[idxGG].replace(/"/g, '').trim();
     const valGH = row[idxGH].replace(/"/g, '').trim();
-    // GG列が「0または空白以外」を削除 ＆ GH列が「0または空白」を削除
     if (valGG !== '0' && valGG !== '') return false;
     if (valGH === '0' || valGH === '') return false;
     return true;
   });
 
-  // B列（開始日）の古い順（昇順）にソート
   normalFiltered.sort((x, y) => new Date(x[idxB].replace(/"/g, '').trim()) - new Date(y[idxB].replace(/"/g, '').trim()));
   const normalTargetRows = normalFiltered.slice(0, 3990);
   const normalFiles = generatePatternFiles(headerLine, normalTargetRows, filePath, accountName, 'normal');
@@ -166,27 +164,30 @@ function processCSVFile(filePath, accountName) {
   // ==========================================
   // 処理B：【PV版】のソートロジック
   // ==========================================
-  // 1. GH列（閲覧数_SMARTPHONE）を降順（大きい順）にソート
   const pvSorted = [...allRows].sort((x, y) => {
     const valX = parseFloat(x[idxGH].replace(/"/g, '').trim()) || 0;
     const valY = parseFloat(y[idxGH].replace(/"/g, '').trim()) || 0;
     return valY - valX;
   });
 
-  // 2. 上から必ず3990件を切り出し
   const pvSliced = pvSorted.slice(0, 3990);
 
-  // 3. 残った3990件をB列（開始日）の古い順（昇順）に再ソート
   pvSliced.sort((x, y) => new Date(x[idxB].replace(/"/g, '').trim()) - new Date(y[idxB].replace(/"/g, '').trim()));
   const pvFiles = generatePatternFiles(headerLine, pvSliced, filePath, accountName, 'pv');
 
   return { normal: normalFiles, pv: pvFiles };
 }
 
+// 🌟 【メニュー対応修正】矢印をホバーして「取込ファイル一覧（移動先）」を選択してアップロード画面を出す関数
 async function uploadCSVFile(page, acc, fileToUpload) {
-  const importUrl = acc.url.replace('/login/', '/csv_import_queues');
-  console.log(`👉 【${acc.name}】ファイル取込予約画面へ移動: ${importUrl}`);
-  await page.goto(importUrl, { waitUntil: 'networkidle' }).catch(() => {});
+  console.log(`👉 【${acc.name}】上部メニューの矢印アイコンにマウスを乗せます...`);
+  const menuHoverIcon = page.locator('.nav-tabs .fa-refresh, .nav-tabs img, li:has(ul) .fa-angle-down, a:has(.fa-refresh), .dropdown-toggle').first();
+  await menuHoverIcon.hover();
+  await page.waitForTimeout(1000);
+
+  console.log(`👉 【${acc.name}】メニューから「取込ファイル一覧」をクリックします`);
+  await page.locator('ul.dropdown-menu a:has-text("取込ファイル一覧"), .dropdown a:has-text("取込ファイル一覧"), a:has-text("取込ファイル一覧")').first().click();
+  await page.waitForLoadState('networkidle').catch(() => {});
   
   console.log(`📤 【${acc.name}】CSVファイル（${path.basename(fileToUpload)}）を選択中...`);
   const fileInput = await page.waitForSelector('input[type="file"]', { timeout: 20000 });
@@ -199,16 +200,20 @@ async function uploadCSVFile(page, acc, fileToUpload) {
   await page.waitForTimeout(8000);
 }
 
+// 🌟 【メニュー対応修正】矢印をホバーして「取込ファイル一覧」を再表示し、状況を追う関数
 async function waitForImportSuccess(page, acc, label) {
-  const queueUrl = acc.url.replace('/login/', '/csv_import_queues');
-  console.log(`👉 【${acc.name}】取込状況を確認するため一覧画面へ移動: ${queueUrl}`);
-  await page.goto(queueUrl, { waitUntil: 'networkidle' });
+  console.log(`👉 【${acc.name}】取込状況を確認するため、メニューの矢印から「取込ファイル一覧」を再開きます...`);
+  const menuHoverIcon = page.locator('.nav-tabs .fa-refresh, .nav-tabs img, li:has(ul) .fa-angle-down, a:has(.fa-refresh), .dropdown-toggle').first();
+  await menuHoverIcon.hover();
+  await page.waitForTimeout(1000);
+  await page.locator('ul.dropdown-menu a:has-text("取込ファイル一覧"), .dropdown a:has-text("取込ファイル一覧"), a:has-text("取込ファイル一覧")').first().click();
+  await page.waitForLoadState('networkidle').catch(() => {});
 
   console.log(`⏳ 【${acc.name}】[${label}] 取込完了（ステータス: 完了 / 詳細: 成功）を無限待機中（画面自動更新待ち）...`);
   
   let loopCount = 1;
   while (true) { 
-    await page.waitForTimeout(5000); // 画面自体の自動リフレッシュを邪魔しないよう5秒おきにテキストチェック
+    await page.waitForTimeout(5000); 
     const firstRowText = await page.locator('table tr').nth(1).innerText().catch(() => '');
     
     if (firstRowText.includes('完了') && firstRowText.includes('成功')) {
@@ -226,7 +231,7 @@ async function waitForImportSuccess(page, acc, label) {
 async function runLoginAndProcess(browser, acc) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
-  page.setDefaultTimeout(0); // 監視用：Playwrightのタイムアウトを完全無効化
+  page.setDefaultTimeout(0); 
 
   page.on('dialog', async dialog => {
     console.log(`💬 【${acc.name}】ダイアログ検出: ${dialog.message()}`);
@@ -251,9 +256,15 @@ async function runLoginAndProcess(browser, acc) {
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
-    // 3. 取出ファイル一覧で完了まで無限待機
-    const queueUrl = acc.url.replace('/login/', '/csv_export_queues');
-    await page.goto(queueUrl, { waitUntil: 'networkidle' });
+    // 3. 【修正項目】矢印メニューをホバーして「取出ファイル一覧」へ移動
+    console.log(`👉 【${acc.name}】上部メニューの矢印アイコンにマウスを乗せます...`);
+    const menuHoverIcon = page.locator('.nav-tabs .fa-refresh, .nav-tabs img, li:has(ul) .fa-angle-down, a:has(.fa-refresh), .dropdown-toggle').first();
+    await menuHoverIcon.hover(); 
+    await page.waitForTimeout(1000); 
+
+    console.log(`👉 【${acc.name}】メニューから「取出ファイル一覧」をクリックします`);
+    await page.locator('ul.dropdown-menu a:has-text("取出ファイル一覧"), .dropdown a:has-text("取出ファイル一覧"), a:has-text("取出ファイル一覧")').first().click();
+    await page.waitForLoadState('networkidle').catch(() => {});
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を無限待機中（画面自動更新待ち）...`);
     let loopCount = 1;
@@ -276,7 +287,7 @@ async function runLoginAndProcess(browser, acc) {
     const downloadPath = path.join(__dirname, `${acc.name}_raw_data.csv`);
     await download.saveAs(downloadPath);
 
-    // 5. データ内部加工（通常版2つ、PV版2つの計4つを一撃で作成）
+    // 5. データ内部加工
     const processed = processCSVFile(downloadPath, acc.name);
     if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 
@@ -292,7 +303,7 @@ async function runLoginAndProcess(browser, acc) {
     // 【タスク②】通常版：掲載求人のアップロード
     console.log(`🔷 【${acc.name}】タスク② [通常版・掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.normal.path2);
-    await page.waitForTimeout(5000); // アップロード直後の安定用
+    await page.waitForTimeout(5000); 
     
     // 【タスク③】PV版：非掲載求人のアップロード
     console.log(`🔶 【${acc.name}】タスク③ [PV版・非掲載] を開始します`);
@@ -302,7 +313,7 @@ async function runLoginAndProcess(browser, acc) {
     // 【タスク④】PV版：掲載求人のアップロード
     console.log(`🔶 【${acc.name}】タスク④ [PV版・掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.pv.path2);
-    await page.waitForTimeout(8000); // 最後のアップロード完了を確実にする待機
+    await page.waitForTimeout(8000); 
 
     console.log(`🎉 【${acc.name}】通常版・PV版を含む全4タスクの工程が正常終了しました。`);
 
@@ -310,7 +321,7 @@ async function runLoginAndProcess(browser, acc) {
     console.log(`⚠️ 【${acc.name}】処理中にエラーが発生: ${error.message}`);
     await page.screenshot({ path: `error_${acc.name}.png`, fullPage: true });
   } finally {
-    await context.close(); // セッション完全クローズ
+    await context.close(); 
   }
 }
 

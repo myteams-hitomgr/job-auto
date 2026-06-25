@@ -22,30 +22,43 @@ async function runLoginAndProcess(browser, acc) {
   console.log(`【${acc.name}】処理開始 - URL: ${acc.url}`);
 
   try {
-    // ログイン画面へ移動
+    // 1. ログイン画面へ移動
     await page.goto(acc.url, { waitUntil: 'networkidle' }); 
 
-    // 💡 ユーザーIDとパスワードの入力欄（隠し属性ではないもの）が表示されるまで待機
+    // ユーザーIDとパスワードの入力欄が表示されるまで待機
     await page.waitForSelector('input[type="text"], input[type="email"], input:not([type="hidden"])', { timeout: 15000 });
 
-    // 💡 ユーザーID入力欄とパスワード入力欄をそれぞれ個別にピンポイント特定
     const idInput = page.locator('input[type="text"], input[type="email"], input[name*="login"], input[name*="id"]').first();
     const passwordInput = page.locator('input[type="password"]').first();
     
-    // 値を流し込む
+    // 値を入力
     await idInput.fill(acc.id);
     await passwordInput.fill(acc.password);
 
-    // 青い「ログイン」ボタンをクリック
+    // ログインボタンをクリック
     const submitButton = page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first();
     await submitButton.click();
 
-    // ログイン処理のための待機
-    await page.waitForTimeout(7000);
+    console.log(`【${acc.name}】ログインボタンをクリックしました。トップページの読み込みを待機中...`);
 
-    // 成功時のスクショを保存
-    await page.screenshot({ path: `${acc.name}_success.png`, fullPage: true });
-    console.log(`📸 【${acc.name}】ログイン成功！画面スクショを保存しました。`);
+    // 2. ログイン後のトップページ（募集管理ボタンがある画面）が表示されるのを待つ
+    // 「募集管理」の文字が含まれるボタンやリンクを探します
+    const recruitMenuLocator = page.locator('a:has-text("募集管理"), div:has-text("募集管理"), button:has-text("募集管理")').first();
+    await recruitMenuLocator.waitFor({ state: 'visible', timeout: 30000 });
+
+    // ログイン直後のスクショを保存
+    await page.screenshot({ path: `${acc.name}_login_success.png`, fullPage: true });
+
+    // 3. 募集管理をクリック！
+    console.log(`👉 【${acc.name}】「募集管理」をクリックします`);
+    await recruitMenuLocator.click();
+
+    // 遷移後の読み込みを少し待つ
+    await page.waitForTimeout(5000);
+
+    // 「募集管理」クリック後の画面スクショを保存
+    await page.screenshot({ path: `${acc.name}_recruit_page.png`, fullPage: true });
+    console.log(`📸 【${acc.name}】「募集管理」画面のスクショを保存しました！`);
 
   } catch (error) {
     console.log(`⚠️ 【${acc.name}】エラーが発生しました: ${error.message}`);
@@ -65,7 +78,6 @@ async function runLoginAndProcess(browser, acc) {
     console.log("処理中にエラーを検出しましたが、ファイル一覧を出力します。");
   }
 
-  // ログ出力用コード
   const fs = require('fs');
   console.log("=== 現在保存されているファイル一覧 ===");
   console.log(fs.readdirSync('.'));

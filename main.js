@@ -7,14 +7,19 @@ const accounts = [
 
 async function runLogin(page, acc) {
   // ログイン画面へ移動
-  await page.goto('https://hitomgr.jp/b/login'); 
+  await page.goto('https://hitomgr.jp/b/login', { waitUntil: 'networkidle' }); 
 
-  // 💡 ヒトマネジャーの実際の入力欄（name="login_id" と name="password"）に修正しました
-  await page.fill('input[name="login_id"]', acc.id);
-  await page.fill('input[name="password"]', acc.password);
+  // 💡 【超強力修正】名前に頼らず、画面内の「1番目の入力欄」と「2番目の入力欄」を直接指定します
+  const inputs = page.locator('input');
+  
+  // 1番目の入力欄にIDを入力
+  await inputs.nth(0).fill(acc.id);
+  // 2番目の入力欄にパスワードを入力
+  await inputs.nth(1).fill(acc.password);
 
-  // ログインボタンをクリック
-  await page.click('button[type="submit"]');
+  // ログインボタン（または送信タイプのボタン）をクリック
+  const submitButton = page.locator('button, input[type="submit"], input[type="image"]').first();
+  await submitButton.click();
 
   await page.waitForTimeout(5000);
 
@@ -33,10 +38,16 @@ async function runLogin(page, acc) {
 
     console.log(`ログイン開始: ${acc.name}`);
 
-    await runLogin(page, acc);
+    try {
+      await runLogin(page, acc);
+    } catch (error) {
+      // エラーが起きても途中で止めず、何が起きたかスクショを撮って残す
+      console.log(`⚠️ エラーが発生しました。現在の画面を保存します: ${acc.name}`);
+      await page.screenshot({ path: `error_${acc.name}.png`, fullPage: true });
+      throw error;
+    }
 
     await page.close();
-
     console.log(`完了: ${acc.name}`);
   }
 

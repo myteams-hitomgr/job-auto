@@ -178,15 +178,16 @@ function processCSVFile(filePath, accountName) {
   return { normal: normalFiles, pv: pvFiles };
 }
 
-// 🌟 矢印をホバーして「取込ファイル一覧」を選択してアップロード画面を出す関数
+// 🌟 確定版：メニューの矢印をホバーして「取込ファイル一覧」を開く
 async function uploadCSVFile(page, acc, fileToUpload) {
-  console.log(`👉 【${acc.name}】上部メニューの矢印アイコンにマウスを乗せます...`);
-  const menuHoverIcon = page.locator('.nav-tabs .fa-refresh, .nav-tabs img, li:has(ul) .fa-angle-down, a:has(.fa-refresh), .dropdown-toggle').first();
+  console.log(`👉 【${acc.name}】上部メニューの矢印ボタンにマウスを乗せます...`);
+  // 画像から判明した上部白抜き矢印の構造（面接カレンダーの隣にあるリスト要素）を確実にホバー
+  const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
   await menuHoverIcon.hover();
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(1500);
 
   console.log(`👉 【${acc.name}】メニューから「取込ファイル一覧」をクリックします`);
-  await page.locator('ul.dropdown-menu a:has-text("取込ファイル一覧"), .dropdown a:has-text("取込ファイル一覧"), a:has-text("取込ファイル一覧")').first().click();
+  await page.locator('a:has-text("取込ファイル一覧")').first().click();
   await page.waitForLoadState('networkidle').catch(() => {});
   
   console.log(`📤 【${acc.name}】CSVファイル（${path.basename(fileToUpload)}）を選択中...`);
@@ -200,13 +201,13 @@ async function uploadCSVFile(page, acc, fileToUpload) {
   await page.waitForTimeout(8000);
 }
 
-// 🌟 矢印をホバーして「取込ファイル一覧」を再表示し、状況を追う関数
+// 🌟 確定版：メニューの矢印をホバーして「取込ファイル一覧」の状況を追う
 async function waitForImportSuccess(page, acc, label) {
   console.log(`👉 【${acc.name}】取込状況を確認するため、メニューの矢印から「取込ファイル一覧」を再開きます...`);
-  const menuHoverIcon = page.locator('.nav-tabs .fa-refresh, .nav-tabs img, li:has(ul) .fa-angle-down, a:has(.fa-refresh), .dropdown-toggle').first();
+  const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
   await menuHoverIcon.hover();
-  await page.waitForTimeout(1000);
-  await page.locator('ul.dropdown-menu a:has-text("取込ファイル一覧"), .dropdown a:has-text("取込ファイル一覧"), a:has-text("取込ファイル一覧")').first().click();
+  await page.waitForTimeout(1500);
+  await page.locator('a:has-text("取込ファイル一覧")').first().click();
   await page.waitForLoadState('networkidle').catch(() => {});
 
   console.log(`⏳ 【${acc.name}】[${label}] 取込完了（ステータス: 完了 / 詳細: 成功）を無限待機中（画面自動更新待ち）...`);
@@ -256,14 +257,14 @@ async function runLoginAndProcess(browser, acc) {
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
-    // 3. 【元の正しいボタンへ】矢印メニューをホバーして「取出ファイル一覧」へ移動
-    console.log(`👉 【${acc.name}】上部メニューの矢印アイコンにマウスを乗せます...`);
-    const menuHoverIcon = page.locator('.nav-tabs .fa-refresh, .nav-tabs img, li:has(ul) .fa-angle-down, a:has(.fa-refresh), .dropdown-toggle').first();
+    // 3. 確定版：矢印メニューをホバーして「取出ファイル一覧」へ移動
+    console.log(`👉 【${acc.name}】上部メニューの矢印ボタンにマウスを乗せます...`);
+    const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
     await menuHoverIcon.hover(); 
-    await page.waitForTimeout(1000); 
+    await page.waitForTimeout(1500); 
 
     console.log(`👉 【${acc.name}】メニューから「取出ファイル一覧」をクリックします`);
-    await page.locator('ul.dropdown-menu a:has-text("取出ファイル一覧"), .dropdown a:has-text("取出ファイル一覧"), a:has-text("取出ファイル一覧")').first().click();
+    await page.locator('a:has-text("取出ファイル一覧")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を無限待機中（画面自動更新待ち）...`);

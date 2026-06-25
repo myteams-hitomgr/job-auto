@@ -25,28 +25,35 @@ async function runLoginAndProcess(browser, acc) {
     // ログイン画面へ移動
     await page.goto(acc.url, { waitUntil: 'networkidle' }); 
 
-    // 💡 【超重要】ログインフォームが埋め込まれている透明な枠（iframe）を探して特定します
-    const loginFrame = page.frame({ url: /.*\/auth\/.*/ }) || page.frames().find(f => f.name().includes('login') || f.url().includes('auth')) || page.mainFrame();
+    // 💡 【大修正】ログイン用の iframe 自体が出現するまで最大10秒待ちます
+    const frameElement = await page.waitForSelector('iframe', { timeout: 10000 });
+    const loginFrame = await frameElement.contentFrame();
 
-    // 枠の中にある「1番目の入力欄（ユーザーID）」と「2番目の入力欄（パスワード）」に入力
+    if (!loginFrame) {
+      throw new Error("ログイン枠（iframe）の読み込みに失敗しました。");
+    }
+
+    // 💡 枠の中の入力欄（input）が表示されるまで少し待機
+    await loginFrame.waitForSelector('input', { timeout: 5000 });
     const inputs = loginFrame.locator('input');
+    
+    // ユーザーIDとパスワードを入力
     await inputs.nth(0).fill(acc.id);
     await inputs.nth(1).fill(acc.password);
 
-    // 枠の中にある「ログインボタン」を確実にクリック
-    // 青いボタンの文字やクラス名に対応
+    // ログインボタンを特定してクリック
     const submitButton = loginFrame.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first();
     await submitButton.click();
 
-    // ログイン後の処理や遷移を待つ
+    // ログイン後の遷移・自動更新のための待機
     await page.waitForTimeout(7000);
 
     // 成功時のスクショを保存
     await page.screenshot({ path: `${acc.name}_success.png`, fullPage: true });
-    console.log(`📸 【${acc.name}】ログイン後の画面スクショを保存しました！`);
+    console.log(`📸 【${acc.name}】ログイン成功！画面スクショを保存しました。`);
 
   } catch (error) {
-    console.log(`⚠️ 【${acc.name}】エラーが発生しました。現在の画面を保存します。`);
+    console.log(`⚠️ 【${acc.name}】エラーが発生しました: ${error.message}`);
     await page.screenshot({ path: `error_${acc.name}.png`, fullPage: true });
     throw error;
   } finally {

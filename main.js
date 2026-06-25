@@ -68,3 +68,11 @@ async function runLogin(page, acc) {
 
   await browser.close();
 })();
+
+// 👇 ここから3行を追加
+  const fs = require('fs');
+  console.log("=== 現在保存されているファイル一覧 ===");
+  console.log(fs.readdirSync('.'));
+
+  await browser.close(); // 元からある行
+})();

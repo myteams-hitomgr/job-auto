@@ -23,6 +23,7 @@ async function runLoginAndProcess(browser, acc) {
   });
   const page = await context.newPage();
 
+  // ダイアログが出たら自動で承諾（OK）する
   page.on('dialog', async dialog => {
     console.log(`💬 【${acc.name}】ダイアログを検出: ${dialog.message()}`);
     await dialog.accept();
@@ -45,59 +46,48 @@ async function runLoginAndProcess(browser, acc) {
     await submitButton.click();
 
     console.log(`【${acc.name}】ログインボタンをクリックしました。`);
-
-    // 2. ログイン後のトップページで「募集管理」をクリック
-    const recruitMenuLocator = page.locator('a:has-text("募集管理"), div:has-text("募集管理"), button:has-text("募集管理"), [class*="menu"] :has-text("募集管理")').first();
-    await recruitMenuLocator.waitFor({ state: 'visible', timeout: 30000 });
-    
-    await page.screenshot({ path: `${acc.name}_login_success.png`, fullPage: true });
-    
-    console.log(`👉 【${acc.name}】「募集管理」をクリックします`);
-    await recruitMenuLocator.click({ force: true });
-
-    // 画面遷移のための確実なディレイとロード待ち
-    await page.waitForTimeout(7000); 
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    // 3. 募集管理画面のロード判定
-    console.log(`👉 【${acc.name}】募集管理画面のコンテンツロードを待機中...`);
-    
-    const exportBtn = page.locator([
-      'a:has-text("ファイル取出")',
-      'button:has-text("ファイル取出")',
-      'a:has-text("ファイル抽出")',
-      'button:has-text("ファイル抽出")',
-      'a:has-text("データ出力")',
-      'button:has-text("データ出力")',
-      '.btn:has-text("ファイル")'
-    ].join(', ')).first();
-    
-    await exportBtn.waitFor({ state: 'attached', timeout: 30000 });
+    // 2. 直接「募集管理（求人案件一覧）」URLへジャンプして予約ボタンを狙う
+    const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
+    console.log(`👉 【${acc.name}】募集管理画面へ直接移動します: ${recruitUrl}`);
+    await page.goto(recruitUrl, { waitUntil: 'networkidle' });
 
+    // 画面が正しく開けたかスクショ
     await page.screenshot({ path: `${acc.name}_recruit_page.png`, fullPage: true });
 
-    // 4. ボタンをクリック
-    console.log(`👉 【${acc.name}】取出予約ボタンをクリックします`);
+    // 3. 画像に写っていた青い「ファイル取出予約」ボタンをクリック
+    console.log(`👉 【${acc.name}】「ファイル取出予約」ボタンを探しています...`);
+    const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約"), .btn:has-text("ファイル取出予約")').first();
+    
+    await exportBtn.waitFor({ state: 'visible', timeout: 30000 });
+    console.log(`👉 【${acc.name}】「ファイル取出予約」ボタンをクリックして抽出を開始させます`);
     await exportBtn.click({ force: true });
-    await page.waitForTimeout(5000);
+    
+    // 予約実行後の処理の合間として少し長めに待機
+    await page.waitForTimeout(8000);
 
-    // 5. 取出ファイル一覧画面へ直接移動
+    // 4. 進捗を確認するため「取出ファイル一覧」URLへジャンプ
     const queueUrl = acc.url.replace('/login/', '/csv_export_queues');
-    console.log(`👉 【${acc.name}】ファイル一覧画面へ移動します: ${queueUrl}`);
+    console.log(`👉 【${acc.name}】進捗を確認するためファイル一覧画面へ移動します: ${queueUrl}`);
     await page.goto(queueUrl, { waitUntil: 'networkidle' });
 
-    // 6. ステータスが「完了」になるまでループ待機（★30分以上の長期戦に対応）
-    console.log(`⏳ 【${acc.name}】CSVファイルの作成完了を待機中（※約30分〜最大50分待ちます）...`);
+    // 5. ステータスが「完了」になるまでループ待機（約30分〜最大50分）
+    console.log(`⏳ 【${acc.name}】CSVファイルの作成完了を待機中（※処理完了まで約30分かかります）...`);
     let isCompleted = false;
     const maxAttempts = 100; // 30秒 × 100回 ＝ 最大50分待機
 
     for (let i = 0; i < maxAttempts; i++) {
+      // 「最新を表示する」ボタンがあればクリック、無ければページ再読み込み
       const refreshBtn = page.locator('button:has-text("最新を表示する"), a:has-text("最新を表示する"), input[value*="最新"], .btn:has-text("最新")').first();
       if (await refreshBtn.isVisible()) {
         await refreshBtn.click();
-        await page.waitForTimeout(3000);
+      } else {
+        await page.reload({ waitUntil: 'networkidle' }).catch(() => {});
       }
+      await page.waitForTimeout(3000);
 
+      // テーブルの1行目（最新のリクエスト）をチェック
       const firstRow = page.locator('table tr').nth(1);
       if (await firstRow.isVisible()) {
         const rowText = await firstRow.innerText();
@@ -107,13 +97,12 @@ async function runLoginAndProcess(browser, acc) {
           isCompleted = true;
           break;
         } else {
-          // 30分かかるため、ログが埋まらないよう経過分数（目安）を出力
           const elapsedMinutes = Math.floor((i * 30) / 60);
           console.log(`⏳ 【${acc.name}】現在ステータス: 待機中/処理中...（約${elapsedMinutes}分経過）再確認します (${i + 1}/${maxAttempts})`);
         }
       }
       
-      // サーバーに負荷をかけすぎないよう、チェック間隔を30秒に延長
+      // 30秒待機
       await page.waitForTimeout(30000); 
     }
 
@@ -123,7 +112,7 @@ async function runLoginAndProcess(browser, acc) {
 
     await page.screenshot({ path: `${acc.name}_queue_ready.png`, fullPage: true });
 
-    // 7. CSVファイルのダウンロードを実行
+    // 6. 完了したCSVファイルのダウンロードを実行
     console.log(`📥 【${acc.name}】CSVファイルのダウンロードを開始します...`);
     const downloadLink = page.locator('table tr').nth(1).locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
     

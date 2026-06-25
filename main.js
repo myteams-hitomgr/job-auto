@@ -1,16 +1,8 @@
 const { chromium } = require('playwright');
 
 const accounts = [
-  {
-    id: process.env.HITOMGR_ID_A,
-    pass: process.env.HITOMGR_PASSWORD,
-    name: "A"
-  },
-  {
-    id: process.env.HITOMGR_ID_B,
-    pass: process.env.HITOMGR_PASSWORD,
-    name: "B"
-  }
+  { name: 'A', id: process.env.HITOMGR_ID_M003, password: process.env.HITOMGR_PASSWORD_PASSU003 },
+  { name: 'B', id: process.env.HITOMGR_ID_U003, password: process.env.HITOMGR_PASSWORD_PASSU003 }
 ];
 
 async function runLogin(page, acc) {

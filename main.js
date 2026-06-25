@@ -199,15 +199,15 @@ async function waitForImportSuccess(page, acc, label) {
   
   let loopCount = 1;
   while (true) { 
-    // 「最新を表示する」ボタンがあればクリックして画面を最新化
     const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
     if (await refreshBtn.isVisible().catch(() => false)) {
       await refreshBtn.click().catch(() => {});
     } else {
-      await page.reload().catch(() => {}); // なければページ丸ごとリロード
+      await page.reload().catch(() => {});
     }
     await page.waitForTimeout(5000); 
 
+    // 取込画面の1行目に「完了」と「成功」があるか直接チェック
     const firstRowText = await page.locator('table tr').nth(1).innerText().catch(() => '');
     if (firstRowText.includes('完了') && firstRowText.includes('成功')) {
       console.log(`✅ 【${acc.name}】[${label}] 取込が正常に「完了・成功」しました！`);
@@ -256,10 +256,9 @@ async function runLoginAndProcess(browser, acc) {
     await page.locator('a:has-text("取出ファイル一覧")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    console.log(`⏳ 【${acc.name}】CSV抽出の完了を無限待機中（5秒おきに最新表示ボタンを押します）...`);
+    console.log(`⏳ 【${acc.name}】CSV抽出の完了を無限待機中（ダウンロードリンクを直接狙い撃ちします）...`);
     let loopCount = 1;
     while (true) {
-      // 🔥 追加：5秒ごとに「最新を表示する」ボタンをクリックして画面を更新！
       const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
       if (await refreshBtn.isVisible().catch(() => false)) {
         await refreshBtn.click().catch(() => {});
@@ -268,22 +267,25 @@ async function runLoginAndProcess(browser, acc) {
       }
       await page.waitForTimeout(5000);
 
-      const rowText = await page.locator('table tr').nth(1).innerText().catch(() => '');
-      if (rowText.includes('完了')) {
-        console.log(`✅ 【${acc.name}】CSV抽出が「完了」しました！`);
+      // 🔥 文字判定をやめ、1行目にダウンロードリンク（aタグ）が出現したかを直接検知！
+      const downloadLinkExists = await page.locator('table tr').nth(1).locator('a[href*=".csv"], a:has-text("ダウンロード")').first().isVisible().catch(() => false);
+      if (downloadLinkExists) {
+        console.log(`✅ 【${acc.name}】ダウンロード可能なファイルを検知しました！`);
         break;
       }
       if (loopCount % 6 === 0) {
-        console.log(`⏳ 【${acc.name}】画面更新しながら抽出完了を待っています...`);
+        console.log(`⏳ 【${acc.name}】画面更新しながらファイルの生成を待っています...`);
       }
       loopCount++;
     }
 
+    // 4. CSVダウンロード
     const downloadLink = page.locator('table tr').nth(1).locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
     const [download] = await Promise.all([page.waitForEvent('download'), downloadLink.click()]);
     const downloadPath = path.join(__dirname, `${acc.name}_raw_data.csv`);
     await download.saveAs(downloadPath);
 
+    // 5. データ内部加工
     const processed = processCSVFile(downloadPath, acc.name);
     if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 

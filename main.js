@@ -16,7 +16,9 @@ const accounts = [
 ];
 
 async function runLoginAndProcess(browser, acc) {
-  const context = await browser.newContext();
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 }
+  });
   const page = await context.newPage();
 
   console.log(`【${acc.name}】処理開始 - URL: ${acc.url}`);
@@ -52,12 +54,17 @@ async function runLoginAndProcess(browser, acc) {
     console.log(`👉 【${acc.name}】「募集管理」をクリックします（妨害カバー回避モード）`);
     await recruitMenuLocator.click({ force: true });
 
-    // 遷移後の読み込みを少し待つ
-    await page.waitForTimeout(5000);
+    // 4. 募集管理画面のコンテンツ（検索条件エリアや一覧テーブルなど）がロードされるのを待つ
+    // 一般的な「検索」ボタンや「求人」というテキストが含まれる要素を待機
+    const jobPageContent = page.locator('button:has-text("検索"), input[value*="検索"], th:has-text("求人"), div:has-text("求人一覧")').first();
+    await jobPageContent.waitFor({ state: 'attached', timeout: 20000 });
+    
+    // 完全に描画が落ち着くまで少しディレイを入れる
+    await page.waitForTimeout(3000);
 
-    // 「募集管理」クリック後の画面スクショを保存
+    // 「募集管理」遷移・ロード完了後の画面スクショを保存
     await page.screenshot({ path: `${acc.name}_recruit_page.png`, fullPage: true });
-    console.log(`📸 【${acc.name}】「募集管理」画面のスクショを保存しました！`);
+    console.log(`📸 【${acc.name}】「募集管理」最終画面のスクショを保存しました！`);
 
   } catch (error) {
     console.log(`⚠️ 【${acc.name}】エラーが発生しました: ${error.message}`);

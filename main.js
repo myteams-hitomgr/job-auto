@@ -54,20 +54,27 @@ async function runLoginAndProcess(browser, acc) {
     // ログイン直後のスクショ
     await page.screenshot({ path: `${acc.name}_login_success.png`, fullPage: true });
     
-    await recruitMenuLocator.click({ force: true });
+    // 募集管理をクリックし、完全にページ遷移（ネットワーク通信が落ち着くまで）を待つ
+    console.log(`👉 【${acc.name}】「募集管理」をクリックして画面遷移します`);
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }).catch(() => {}),
+      recruitMenuLocator.click({ force: true })
+    ]);
 
-    // 3. 募集管理画面のロードを待つ（「ファイル取出予約」ボタンを基準に待つ）
-    console.log(`👉 【${acc.name}】募集管理画面のロードを待機中...`);
+    // 3. 募集管理画面のロードを待つ
+    console.log(`👉 【${acc.name}】募集管理画面のコンテンツロードを待機中...`);
     const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約"), .btn:has-text("ファイル取出予約")').first();
-    await exportBtn.waitFor({ state: 'attached', timeout: 30000 });
+    
+    // ボタン要素が画面上にしっかりと現れるまで待機
+    await exportBtn.waitFor({ state: 'visible', timeout: 30000 });
 
-    // 募集管理画面のスクショ
+    // 募集管理画面のスクショ（ここにボタンが綺麗に映るはずです）
     await page.screenshot({ path: `${acc.name}_recruit_page.png`, fullPage: true });
 
     // 4. 「ファイル取出予約」ボタンをクリック
     console.log(`👉 【${acc.name}】「ファイル取出予約」をクリックします`);
     await exportBtn.click({ force: true });
-    await page.waitForTimeout(5000); // 予約処理が裏で走るのを少し待つ
+    await page.waitForTimeout(5000); // 予約処理が走るのを少し待つ
 
     // 5. 取出ファイル一覧画面へ直接移動
     const queueUrl = acc.url.replace('/login/', '/csv_export_queues');

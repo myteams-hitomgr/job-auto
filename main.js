@@ -301,8 +301,23 @@ loopCount++;
     }
 
     // 4. CSVダウンロード
-    const downloadLink = page.locator('table tr').nth(1).locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
-    const [download] = await Promise.all([page.waitForEvent('download'), downloadLink.click()]);
+   const downloadLink = page
+  .locator('table tbody tr')
+  .first()
+  .locator('a')
+  .first();
+
+console.log(`📥 CSVリンクをクリックします`);
+
+const downloadPromise = page.waitForEvent('download', {
+  timeout: 120000
+});
+
+await downloadLink.click({
+  force: true
+});
+
+const download = await downloadPromise;
     const downloadPath = path.join(__dirname, `${acc.name}_raw_data.csv`);
     await download.saveAs(downloadPath);
 

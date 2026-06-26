@@ -253,10 +253,18 @@ async function runLoginAndProcess(browser, acc) {
     await page.waitForTimeout(1500); 
 
     console.log(`👉 【${acc.name}】メニューから「取出ファイル一覧」をクリックします`);
-    await page.locator('a:has-text("取出ファイル一覧")').first().click();
-    await page.waitForLoadState('networkidle').catch(() => {});
+await page.locator('a:has-text("取出ファイル一覧")').first().click();
+await page.waitForLoadState('networkidle').catch(() => {});
 
-    console.log(`⏳ 【${acc.name}】CSV抽出の完了を無限待機中（ダウンロードリンクを直接狙い撃ちします）...`);
+// ★現在表示されている画面を保存
+await page.screenshot({
+  path: `after_open_list_${acc.name}.png`,
+  fullPage: true
+});
+
+console.log(`📸 【${acc.name}】取出ファイル一覧のスクリーンショットを保存しました。`);
+
+console.log(`⏳ 【${acc.name}】CSV抽出の完了を無限待機中（ダウンロードリンクを直接狙い撃ちします）...`);
     let loopCount = 1;
     while (true) {
       const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();

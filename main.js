@@ -199,19 +199,23 @@ async function waitForImportSuccess(page, acc, label) {
   
   let loopCount = 1;
   while (true) { 
-    // 💡 画面自体の自動更新に委ねるため、クリックやリロードをせず5秒ごとに最新行の状態のみをチェック
     await page.waitForTimeout(5000); 
 
-    // 取込画面の1行目（リクエスト日時のすぐ下の行）をチェック
-    const firstRow = page.locator('table tr').nth(1);
-    const cells = firstRow.locator('td');
-    const cellCount = await cells.count().catch(() => 0);
-    
+    // 全てのデータ行（tr）を走査してリクエスト日付がある本物のデータ最初の1行目を特定
+    const rows = await page.locator('table tr').all();
     let statusText = "";
     let detailText = "";
-    if (cellCount >= 4) {
-      statusText = await cells.nth(2).innerText().catch(() => "");
-      detailText = await cells.nth(3).innerText().catch(() => "");
+
+    for (const row of rows) {
+      const cells = await row.locator('td').all();
+      if (cells.length >= 4) {
+        const firstCellText = await cells[0].evaluate(el => el.textContent || "");
+        if (firstCellText.includes('2026') || firstCellText.includes('/') || firstCellText.includes(':')) {
+          statusText = await cells[2].evaluate(el => el.textContent || "");
+          detailText = await cells[3].evaluate(el => el.textContent || "");
+          break;
+        }
+      }
     }
 
     if (statusText.includes('完了') && detailText.includes('成功')) {
@@ -219,7 +223,7 @@ async function waitForImportSuccess(page, acc, label) {
       break;
     } else {
       if (loopCount % 6 === 0) {
-        console.log(`⏳ 【${acc.name}】[${label}] 画面の自動更新を待ちながら、完了ステータスを確認中... 現在の状態: [${statusText}] ${detailText}`);
+        console.log(`⏳ 【${acc.name}】[${label}] 画面の自動更新を待ちながら、完了ステータスを確認中... 現在の状態: [${statusText.trim()}] ${detailText.trim()}`);
       }
     }
     loopCount++;
@@ -261,46 +265,60 @@ async function runLoginAndProcess(browser, acc) {
     await page.locator('a:has-text("取出ファイル一覧")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中（リクエスト日時のすぐ下の行を注視）...`);
+    console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中（有効なデータ行をスマートスキャン）...`);
     let loopCount = 1;
+    let targetRowLocator = null;
+
     while (true) {
-      // 💡 画面が自動でリロードされていく仕様に合わせ、能動的な更新処理（リロード等）を撤廃
       await page.waitForTimeout(5000);
 
-      const firstRow = page.locator('table tr').nth(1);
-      
-      // 各セル（td）から個別テキストを取得して、不完全な結合を回避する
-      const cells = firstRow.locator('td');
-      const cellCount = await cells.count().catch(() => 0);
-      
+      const rows = await page.locator('table tr').all();
       let statusText = "";
       let detailText = "";
-      if (cellCount >= 4) {
-        statusText = await cells.nth(2).innerText().catch(() => "");
-        detailText = await cells.nth(3).innerText().catch(() => "");
+      targetRowLocator = null;
+
+      // 有効なリクエスト日時が入っている本物の最新データ行を見つける
+      for (const row of rows) {
+        const cells = await row.locator('td').all();
+        if (cells.length >= 4) {
+          const dateText = await cells[0].evaluate(el => el.textContent || "");
+          // 日付形式っぽい文字列が含まれている行を最新行として認識
+          if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
+            statusText = await cells[2].evaluate(el => el.textContent || "");
+            detailText = await cells[3].evaluate(el => el.textContent || "");
+            targetRowLocator = row; // ダウンロードボタンをあとでクリックするためにキープ
+            break;
+          }
+        }
       }
 
-      // 🛑 万が一キャンセルになった場合の安全弁
-      if (statusText.includes('キャンセル') || detailText.includes('キャンセル')) {
+      // 🛑 万が一キャンセルになった場合の安全弁 (有効な文字が取れている時だけ反応)
+      if (statusText.length > 0 && (statusText.includes('キャンセル') || detailText.includes('キャンセル'))) {
         throw new Error(`管理画面側でリクエストが「キャンセル」されました。履歴を確認してください。`);
       }
 
-      // 🎯 リクエスト日時のすぐ下の行（2行目）にダウンロードリンク（aタグ）が出現したかを検知
-      const downloadLinkExists = await firstRow.locator('a[href*=".csv"], a:has-text("ダウンロード")').first().isVisible().catch(() => false);
+      // ダウンロードリンクの有無をチェック
+      let downloadLinkExists = false;
+      if (targetRowLocator) {
+        downloadLinkExists = await targetRowLocator.locator('a[href*=".csv"], a:has-text("ダウンロード")').first().isVisible().catch(() => false);
+      }
       
+      // 文字列の「完了」や「成功」が含まれるか、あるいはダウンロードリンクが露出したら突破
       if (downloadLinkExists && (statusText.includes('完了') || statusText.includes('成功') || detailText.includes('rec_recruitments'))) {
         console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了とURLを検知しました！`);
         break;
       }
       
       if (loopCount % 6 === 0) {
-        console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${statusText}] ${detailText}`);
+        const displayStatus = statusText.trim() || "読み込み中";
+        const displayDetail = detailText.trim() || "...";
+        console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${displayStatus}] ${displayDetail}`);
       }
       loopCount++;
     }
 
-    // 4. CSVダウンロード
-    const downloadLink = page.locator('table tr').nth(1).locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
+    // 4. CSVダウンロード (特定した本物の最新行からダウンロードリンクをクリック)
+    const downloadLink = targetRowLocator.locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
     const [download] = await Promise.all([page.waitForEvent('download'), downloadLink.click()]);
     const downloadPath = path.join(__dirname, `${acc.name}_raw_data.csv`);
     await download.saveAs(downloadPath);

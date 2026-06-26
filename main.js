@@ -264,53 +264,58 @@ await page.screenshot({
 
 console.log(`📸 【${acc.name}】取出ファイル一覧のスクリーンショットを保存しました。`);
 
-console.log(`⏳ 【${acc.name}】CSV抽出の完了を無限待機中（ダウンロードリンクを直接狙い撃ちします）...`);
-    let loopCount = 1;
-    while (true) {
-      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
-      if (await refreshBtn.isVisible().catch(() => false)) {
-        await refreshBtn.click().catch(() => {});
-      } else {
-        await page.reload().catch(() => {});
-      }
-      await page.waitForTimeout(5000);
+console.log(`⏳ 【${acc.name}】CSV作成完了を監視します...`);
 
-     // 1行目のCSVリンクが出るまで待機
-const firstRow = page.locator('table tbody tr').first();
+while (true) {
 
-const statusText = await firstRow.locator('td').nth(2).innerText().catch(() => '');
-const detailText = await firstRow.locator('td').nth(3).innerText().catch(() => '');
+  const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
 
-console.log(`状態=${statusText}`);
-console.log(`詳細=${detailText}`);
+  if (await refreshBtn.isVisible().catch(() => false)) {
+    await refreshBtn.click().catch(() => {});
+  } else {
+    await page.reload().catch(() => {});
+  }
 
-if (
-  statusText.includes('完了') &&
-  detailText.includes('rec_recruitments_') &&
-  detailText.includes('.csv')
-) {
-  console.log(`✅ 【${acc.name}】CSV完成を検知しました！`);
-  break;
-}
+  await page.waitForTimeout(10000);
 
-if (loopCount % 6 === 0) {
-  console.log(`⏳ 【${acc.name}】CSV生成待ち...`);
+  // 一番上の行を取得
+  const firstRow = page.locator('table tbody tr').first();
+
+  const rowText = await firstRow.innerText().catch(() => "");
+
+  console.log("===== 現在の1行目 =====");
+  console.log(rowText);
+  console.log("======================");
+
+  // 「完了」かつCSVファイル名が表示されたら終了
+  if (
+    rowText.includes("完了") &&
+    rowText.includes("rec_recruitments_") &&
+    rowText.includes(".csv")
+  ) {
+
+    console.log(`✅ 【${acc.name}】CSV完成を検知しました`);
+
+    break;
+  }
+
 }
 
 loopCount++;
     }
 
     // 4. CSVダウンロード
-   const downloadLink = page
+  const downloadLink = page
   .locator('table tbody tr')
   .first()
   .locator('a')
+  .filter({ hasText: 'rec_recruitments_' })
   .first();
 
-console.log(`📥 CSVリンクをクリックします`);
+console.log(`📥 CSVをダウンロードします...`);
 
 const downloadPromise = page.waitForEvent('download', {
-  timeout: 120000
+  timeout: 300000 // 5分待機
 });
 
 await downloadLink.click({

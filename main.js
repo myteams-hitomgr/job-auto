@@ -199,8 +199,8 @@ async function waitForImportSuccess(page, acc, label) {
   
   let loopCount = 1;
   while (true) { 
-    // 取込ファイル一覧も30秒おきに矢印メニューから開き直して監視
-    await page.waitForTimeout(30000); 
+    // 取込の確認も同様に2分（120秒）スパンで安全に巡回
+    await page.waitForTimeout(120000); 
     const menuIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
     await menuIcon.hover().catch(() => {});
     await page.waitForTimeout(1000);
@@ -267,7 +267,7 @@ async function runLoginAndProcess(browser, acc) {
     console.log(`📸 【${acc.name}】取出ファイル一覧のスクリーンショット・HTMLを保存しました。`);
 
     // ==========================================
-    // 3. CSV完成の監視 (30秒おきにメニューから開き直すロジック)
+    // 3. CSV完成の監視 (2分（120秒）おきにメニューを開き直すロジック)
     // ==========================================
     console.log(`⏳ 【${acc.name}】CSV作成完了を監視します...`);
 
@@ -294,12 +294,12 @@ async function runLoginAndProcess(browser, acc) {
 
       if (found) break;
 
-      // 1行目の内容を出力（進捗文字「残り約〇〇分」をしっかりログで確認するため）
+      // 現在の進捗状況をログに出力
       const topRowText = await page.locator('table tbody tr').first().innerText().catch(() => "データなし");
       console.log(`⏳ 【${acc.name}】CSV生成待ち... (${loopCount}回目) / 現在の1行目の状態: ${topRowText.replace(/\n/g, ' ')}`);
 
-      // 🟢 提案いただいたロジック：30秒待機してからメニューの矢印から開き直して更新する
-      await page.waitForTimeout(30000);
+      // 🟢 2分間（120秒）待機してからメニューの矢印から開き直して画面を書き換える
+      await page.waitForTimeout(120000);
 
       const loopMenuIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
       await loopMenuIcon.hover().catch(() => {});

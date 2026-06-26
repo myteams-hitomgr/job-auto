@@ -266,7 +266,6 @@ async function runLoginAndProcess(browser, acc) {
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中（有効なデータ行をスマートスキャン）...`);
     let loopCount = 1;
-    let targetRowLocator = null;
 
     while (true) {
       await page.waitForTimeout(5000);
@@ -274,7 +273,6 @@ async function runLoginAndProcess(browser, acc) {
       const rows = await page.locator('table tr').all();
       let statusText = "";
       let detailText = "";
-      targetRowLocator = null;
 
       for (const row of rows) {
         const cells = await row.locator('td').all();
@@ -283,7 +281,6 @@ async function runLoginAndProcess(browser, acc) {
           if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
             statusText = await cells[2].evaluate(el => el.textContent || "");
             detailText = await cells[3].evaluate(el => el.textContent || "");
-            targetRowLocator = row;
             break;
           }
         }
@@ -293,7 +290,6 @@ async function runLoginAndProcess(browser, acc) {
         throw new Error(`管理画面側でリクエストが「キャンセル」されました。履歴を確認してください。`);
       }
 
-      // 【修正箇所】「完了」か「成功」か、あるいは詳細にCSV名が含まれたらダウンロードフェーズへ進む（可視性チェックによる無限ループを防止）
       if (statusText.includes('完了') || statusText.includes('成功') || detailText.includes('rec_recruitments')) {
         console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
         break;
@@ -307,14 +303,37 @@ async function runLoginAndProcess(browser, acc) {
       loopCount++;
     }
 
-    // ダウンロードリンクを特定してクリック（要素が新しく切り替わっていても確実に対処できるよう待機を挟む）
-    const downloadLink = targetRowLocator.locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
-    await downloadLink.waitFor({ state: 'visible', timeout: 10000 });
+    // 【大幅改善】DOM失効によるStaleエラーを防ぐため、ループ脱出後に最新のテーブルから「最初のデータ行」のダウンロードリンクを毎回ダイレクトに捕捉します
+    console.log(`👉 【${acc.name}】ダウンロード用リンクを安全に再スキャン中...`);
+    await page.waitForTimeout(2000); // 念のためリンクがDOMに描画されるのを2秒待つ
     
+    const finalRows = await page.locator('table tr').all();
+    let downloadLink = null;
+    
+    for (const row of finalRows) {
+      const cells = await row.locator('td').all();
+      if (cells.length >= 4) {
+        const dateText = await cells[0].evaluate(el => el.textContent || "");
+        if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
+          // 条件を満たす最初のデータ行の中にあるダウンロードリンクを直接取得
+          downloadLink = row.locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
+          break;
+        }
+      }
+    }
+
+    if (!downloadLink) {
+      throw new Error("CSVのダウンロードリンクを再特定できませんでした。");
+    }
+
+    // リンクが表示されるのを待ってクリック
+    await downloadLink.waitFor({ state: 'visible', timeout: 15000 });
     const [download] = await Promise.all([page.waitForEvent('download'), downloadLink.click()]);
+    
     const downloadPath = path.join(__dirname, `${acc.name}_raw_data.csv`);
     await download.saveAs(downloadPath);
 
+    // ⭐ ここで保存されたCSVに対して、ファイルの加工・編集処理（processCSVFile）が自動実行されます
     const processed = processCSVFile(downloadPath, acc.name);
     if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 

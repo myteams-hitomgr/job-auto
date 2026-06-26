@@ -199,12 +199,7 @@ async function waitForImportSuccess(page, acc, label) {
   
   let loopCount = 1;
   while (true) { 
-    const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
-    if (await refreshBtn.isVisible().catch(() => false)) {
-      await refreshBtn.click().catch(() => {});
-    } else {
-      await page.reload().catch(() => {});
-    }
+    // システムの自動リロードに身を任せて、5秒ごとに中身をチェックするだけにする
     await page.waitForTimeout(5000); 
 
     const firstRowText = await page.locator('table tr').nth(1).innerText().catch(() => '');
@@ -213,7 +208,7 @@ async function waitForImportSuccess(page, acc, label) {
       break;
     } else {
       if (loopCount % 6 === 0) {
-        console.log(`⏳ 【${acc.name}】[${label}] 最新状況に更新しながら、完了を待っています...`);
+        console.log(`⏳ 【${acc.name}】[${label}] システムの自動更新を待ちつつ監視中...`);
       }
     }
     loopCount++;
@@ -227,7 +222,7 @@ async function runLoginAndProcess(browser, acc) {
 
   page.on('dialog', async dialog => {
     console.log(`💬 【${acc.name}】ダイアログ検出: ${dialog.message()}`);
-    await dialog.accept();
+    await dialog.accept().catch(() => {});
   });
 
   try {
@@ -269,7 +264,7 @@ async function runLoginAndProcess(browser, acc) {
     console.log(`📸 【${acc.name}】取出ファイル一覧のスクリーンショット・HTMLを保存しました。`);
 
     // ==========================================
-    // 3. CSV完成の監視 (確実な判定に強化)
+    // 3. CSV完成の監視 (システムの自動リロードに委ねる形に修正)
     // ==========================================
     console.log(`⏳ 【${acc.name}】CSV作成完了を監視します...`);
 
@@ -277,18 +272,12 @@ async function runLoginAndProcess(browser, acc) {
     let targetRowLocator = null;
 
     while (true) {
-      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
-
-      if (await refreshBtn.isVisible().catch(() => false)) {
-        await refreshBtn.click().catch(() => {});
-      } else {
-        await page.reload().catch(() => {});
-      }
-
+      // 🛑 プログラム側からの手動リロードやボタンクリックは一切しない
+      // 画面自体が勝手にリロードされるため、10秒ごとにHTMLデータだけを確認する
       await page.waitForTimeout(10000);
 
       const rows = page.locator('table tbody tr');
-      const count = await rows.count();
+      const count = await rows.count().catch(() => 0);
       let found = false;
 
       for (let i = 0; i < count; i++) {
@@ -306,10 +295,9 @@ async function runLoginAndProcess(browser, acc) {
 
       if (found) break;
 
-      if (loopCount % 6 === 0) {
-        const topRowText = await page.locator('table tbody tr').first().innerText().catch(() => "");
-        console.log(`⏳ 【${acc.name}】CSV生成待ち... (${loopCount}回目) / 現在の1行目: ${topRowText.replace(/\n/g, ' ')}`);
-      }
+      // 10秒ごとに現在の1行目の内容を出力（進捗が「残り〇〇分」と変わるはず）
+      const topRowText = await page.locator('table tbody tr').first().innerText().catch(() => "データなし");
+      console.log(`⏳ 【${acc.name}】CSV生成待ち... (確認回数: ${loopCount}) / 現在の状態: ${topRowText.replace(/\n/g, ' ')}`);
 
       loopCount++;
     }
@@ -327,7 +315,7 @@ async function runLoginAndProcess(browser, acc) {
     });
 
     console.log(`📥 ダウンロードリンクをクリックします...`);
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000);
     await downloadLink.click({ force: true });
 
     const download = await downloadPromise;

@@ -63,7 +63,7 @@ function getTargetDates() {
     hyphenToday: `${yyyy}/${now.getMonth() + 1}/${now.getDate()}`,
     flatToday: `${yyyy}${mm}${dd}`,
     future10Years: `${yyyy + 10}/${now.getMonth() + 1}/${now.getDate()}`,
-    matchTodayStr: `${yyyy}/${mm}/${dd}` // ゼロ埋め形式（2026/06/26など）
+    matchTodayStr: `${yyyy}/${mm}/${dd}` // 2026/06/26 形式
   };
 }
 
@@ -240,6 +240,10 @@ async function runLoginAndProcess(browser, acc) {
     const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
     await page.goto(recruitUrl, { waitUntil: 'networkidle' });
 
+    // 🎯 予約ボタンを押す直前のシステム時刻（UNIXタイムスタンプ）を記録
+    // サーバーとのわずかな時間差を考慮し、2分前（120秒前）を基準点にします
+    const requestThresholdTime = Date.now() - 120000; 
+
     console.log(`👉 【${acc.name}】「ファイル取出予約」を実行します（全求人対象）`);
     const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約")').first();
     await exportBtn.waitFor({ state: 'visible', timeout: 30000 });
@@ -269,7 +273,7 @@ async function runLoginAndProcess(browser, acc) {
     console.log(`📸 【${acc.name}】取出ファイル一覧のスクリーンショット・HTMLを保存しました。`);
 
     // ==========================================
-    // 3. CSV完成の監視 (横並び条件：本日日付＋完了＋CSVファイルURL)
+    // 3. CSV完成の監視 (時刻厳密判定：今回のリクエスト以降の完了データのみ対象)
     // ==========================================
     console.log(`⏳ 【${acc.name}】CSV作成完了を監視します...`);
 
@@ -278,34 +282,42 @@ async function runLoginAndProcess(browser, acc) {
     let finalDownloadLinkLocator = null;
 
     while (true) {
-      // どのようなHTMLクラス名にも対応できるよう「tr」タグ要素をすべて取得
+      const fullPageText = await page.innerText('body').catch(() => "");
       const rows = page.locator('tr');
       const rowCount = await rows.count().catch(() => 0);
-      
-      let foundTargetRow = false;
+      let foundTarget = false;
 
       for (let i = 0; i < rowCount; i++) {
-        const currentRow = rows.nth(i);
-        const rowText = await currentRow.innerText().catch(() => "");
+        const rowText = await rows.nth(i).innerText().catch(() => "");
 
-        // 🎯 【条件】同じ行（横並び）に「本日の日付」「完了」「rec_recruitments」が含まれるか判定
+        // 本日の日付、完了、CSVリンクが含まれる場合、さらに時刻をチェック
         if (rowText.includes(dates.matchTodayStr) && rowText.includes("完了") && rowText.includes("rec_recruitments")) {
-          console.log(`✅ 【${acc.name}】条件一致する本日の完了CSV行を発見しました (上から ${i + 1} つ目のtr要素)`);
           
-          // その行の内部にあるCSVダウンロードリンク（aタグ）をロック
-          finalDownloadLinkLocator = currentRow.locator('a[href*="rec_recruitments"]').first();
-          foundTargetRow = true;
-          break; // 複数あっても「一番上段にあるもの」でループを抜ける
+          // 正規表現で「2026/06/26 12:03:44」のような日時部分を抽出
+          const timeMatch = rowText.match(/\d{4}\/\d{2}\/\d{2}\s+(\d{2}):(\d{2}):(\d{2})/);
+          if (timeMatch) {
+            const [fullDateTimeStr] = timeMatch;
+            const rowTimeObject = new Date(fullDateTimeStr);
+            
+            // 🎯 【超重要判定】該当行のリクエスト日時が、今回のリクエスト開始時刻以降であるかを確認！
+            if (rowTimeObject.getTime() >= requestThresholdTime) {
+              console.log(`✅ 【${acc.name}】今回のリクエストに対応する新しい完了CSV行を特定しました！ (日時: ${fullDateTimeStr})`);
+              finalDownloadLinkLocator = rows.nth(i).locator('a[href*="rec_recruitments"]').first();
+              foundTarget = true;
+              break;
+            }
+          }
         }
       }
 
-      if (foundTargetRow) break;
+      if (foundTarget) break;
 
-      // まだ見つからない場合、1行目の進行状況テキストなどを生存ログとして出力
-      const topRowText = rowCount > 1 ? await rows.nth(1).innerText().catch(() => "") : "";
-      console.log(`⏳ 【${acc.name}】CSV生成待ち... (${loopCount}回目) / 最新の状況: ${topRowText.replace(/\n/g, ' ')}`);
+      // 進捗状況の出力
+      const progressMatch = fullPageText.match(/\d+\/\d+件出力中\s+残り約\d+分\d+秒/);
+      const progressStr = progressMatch ? progressMatch[0] : (fullPageText.includes("進行中") ? "進行中 (集計処理中)" : "生成待ち・または過去のログをスキップ中");
+      console.log(`⏳ 【${acc.name}】CSV生成待ち... (${loopCount}回目) / 現在の状態: ${progressStr}`);
 
-      // 🟢 2分間（120秒）待機してから、上部メニューの矢印から「取出ファイル一覧」を開き直して画面更新
+      // 🟢 2分間（120秒）待機してから画面更新
       await page.waitForTimeout(120000);
 
       const loopMenuIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
@@ -320,7 +332,7 @@ async function runLoginAndProcess(browser, acc) {
     // ==========================================
     // 4. CSVダウンロード処理
     // ==========================================
-    console.log(`📥 CSVのダウンロードリンクを確認中...`);
+    console.log(`📥 特定した最新CSVのダウンロードリンクを確認中...`);
     await finalDownloadLinkLocator.waitFor({ state: 'visible', timeout: 30000 });
 
     const downloadPromise = page.waitForEvent('download', { timeout: 300000 });
@@ -357,7 +369,7 @@ async function runLoginAndProcess(browser, acc) {
     await uploadCSVFile(page, acc, processed.pv.path2);
     await page.waitForTimeout(8000); 
 
-    console.log(`🎉 【${acc.name}】通常版・PV版を含む全4タスクの工程が正常終了しました。`);
+    console.log(`🎉 【${acc.name}】通常版・PV版を含む全 4 タスクの工程が正常終了しました。`);
 
   } catch (error) {
     console.log(`⚠️ 【${acc.name}】処理中にエラーが発生: ${error.message}`);

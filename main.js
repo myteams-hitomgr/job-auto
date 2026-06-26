@@ -63,7 +63,7 @@ function getTargetDates() {
     hyphenToday: `${yyyy}/${now.getMonth() + 1}/${now.getDate()}`,
     flatToday: `${yyyy}${mm}${dd}`,
     future10Years: `${yyyy + 10}/${now.getMonth() + 1}/${now.getDate()}`,
-    matchTodayStr: `${yyyy}/${mm}/${dd}` // 2026/06/26 形式
+    matchTodayStr: `${yyyy}/${mm}/${dd}`
   };
 }
 
@@ -181,7 +181,7 @@ async function uploadCSVFile(page, acc, fileToUpload) {
   const fileInput = await page.waitForSelector('input[type="file"]', { timeout: 20000 });
   await fileInput.setInputFiles(fileToUpload);
   
-  const uploadBtn = page.locator('button:has-text("取込"), input[value*="取込"], button:has-text("保存"), .btn:has-text("実行")').first();
+  const uploadBtn = page.locator('button:has-text("取込"), input[value*="取込"), button:has-text("保存"), .btn:has-text("実行")').first();
   await uploadBtn.click();
   
   console.log(`🚀 【${acc.name}】取込リクエスト送信完了。`);
@@ -237,12 +237,20 @@ async function runLoginAndProcess(browser, acc) {
     await page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
+    // 先に一覧画面の現状を把握するため、「取出ファイル一覧」ページへ一度向かいます
+    const listUrl = acc.url.replace('/login/', '/rec_recruitments').replace('rec_recruitments', 'export_files');
+    await page.goto(listUrl, { waitUntil: 'networkidle' }).catch(() => {});
+    
+    // 現在の最上段にある最も新しいリクエストの「日時テキスト」を事前に取得
+    const firstRow = page.locator('tr').nth(1);
+    const firstRowText = await firstRow.innerText().catch(() => "");
+    const timeMatchBefore = firstRowText.match(/\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}/);
+    const lastRequestTimeStr = timeMatchBefore ? timeMatchBefore[0] : "";
+    console.log(`📝 【${acc.name}】リクエスト前の最新行日時: ${lastRequestTimeStr || "記録なし（新規）"}`);
+
+    // 求人管理ページに戻り、ファイル取出予約を実行
     const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
     await page.goto(recruitUrl, { waitUntil: 'networkidle' });
-
-    // 🎯 予約ボタンを押す直前のシステム時刻（UNIXタイムスタンプ）を記録
-    // サーバーとのわずかな時間差を考慮し、2分前（120秒前）を基準点にします
-    const requestThresholdTime = Date.now() - 120000; 
 
     console.log(`👉 【${acc.name}】「ファイル取出予約」を実行します（全求人対象）`);
     const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約")').first();
@@ -273,7 +281,7 @@ async function runLoginAndProcess(browser, acc) {
     console.log(`📸 【${acc.name}】取出ファイル一覧のスクリーンショット・HTMLを保存しました。`);
 
     // ==========================================
-    // 3. CSV完成の監視 (時刻厳密判定：今回のリクエスト以降の完了データのみ対象)
+    // 3. CSV完成の監視 (時刻厳密判定：直前の最新日時よりも新しい行、または1行目のみ対象)
     // ==========================================
     console.log(`⏳ 【${acc.name}】CSV作成完了を監視します...`);
 
@@ -287,21 +295,19 @@ async function runLoginAndProcess(browser, acc) {
       const rowCount = await rows.count().catch(() => 0);
       let foundTarget = false;
 
-      for (let i = 0; i < rowCount; i++) {
+      for (let i = 1; i < rowCount; i++) {
         const rowText = await rows.nth(i).innerText().catch(() => "");
 
-        // 本日の日付、完了、CSVリンクが含まれる場合、さらに時刻をチェック
         if (rowText.includes(dates.matchTodayStr) && rowText.includes("完了") && rowText.includes("rec_recruitments")) {
+          const timeMatch = rowText.match(/\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}/);
           
-          // 正規表現で「2026/06/26 12:03:44」のような日時部分を抽出
-          const timeMatch = rowText.match(/\d{4}\/\d{2}\/\d{2}\s+(\d{2}):(\d{2}):(\d{2})/);
           if (timeMatch) {
-            const [fullDateTimeStr] = timeMatch;
-            const rowTimeObject = new Date(fullDateTimeStr);
-            
-            // 🎯 【超重要判定】該当行のリクエスト日時が、今回のリクエスト開始時刻以降であるかを確認！
-            if (rowTimeObject.getTime() >= requestThresholdTime) {
-              console.log(`✅ 【${acc.name}】今回のリクエストに対応する新しい完了CSV行を特定しました！ (日時: ${fullDateTimeStr})`);
+            const currentIdxTimeStr = timeMatch[0];
+
+            // 🎯 【判定】取得した日時が、ボタンを押す前の最上段日時（lastRequestTimeStr）と異なる（＝新しく生成された）、
+            // または、最上段（i=1）自体が本日日付で「完了」に変わっている場合
+            if (currentIdxTimeStr !== lastRequestTimeStr || i === 1) {
+              console.log(`✅ 【${acc.name}】今回リクエストした新しい完了CSV行を特定しました！ (日時: ${currentIdxTimeStr})`);
               finalDownloadLinkLocator = rows.nth(i).locator('a[href*="rec_recruitments"]').first();
               foundTarget = true;
               break;
@@ -314,7 +320,7 @@ async function runLoginAndProcess(browser, acc) {
 
       // 進捗状況の出力
       const progressMatch = fullPageText.match(/\d+\/\d+件出力中\s+残り約\d+分\d+秒/);
-      const progressStr = progressMatch ? progressMatch[0] : (fullPageText.includes("進行中") ? "進行中 (集計処理中)" : "生成待ち・または過去のログをスキップ中");
+      const progressStr = progressMatch ? progressMatch[0] : (fullPageText.includes("進行中") ? "進行中 (集計処理中)" : "新規CSVの生成待ち...");
       console.log(`⏳ 【${acc.name}】CSV生成待ち... (${loopCount}回目) / 現在の状態: ${progressStr}`);
 
       // 🟢 2分間（120秒）待機してから画面更新

@@ -204,7 +204,6 @@ async function waitForImportSuccess(page, acc, label) {
 
     const bodyText = await page.innerText('body').catch(() => '');
     
-    // 判定条件を「完了」だけで検知できるように少し緩和（「成功」の有無に関わらず安全に抜けるため）
     if (bodyText.includes('完了') || bodyText.includes('成功')) {
       console.log(`✅ 【${acc.name}】[${label}] 取込ステータス「完了」または「成功」を確認しました！`);
       return;
@@ -212,7 +211,7 @@ async function waitForImportSuccess(page, acc, label) {
       console.log(`⏳ 【${acc.name}】[${label}] まだ処理中のため、30秒待機します...`);
     }
 
-    await page.waitForTimeout(30000); // 120秒から30秒へ短縮し効率化
+    await page.waitForTimeout(30000); 
     loopCount++;
   }
   
@@ -222,7 +221,9 @@ async function waitForImportSuccess(page, acc, label) {
 async function runLoginAndProcess(browser, acc) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
-  page.setDefaultTimeout(60000); // 無限に待たないようデフォルトタイムアウトを設定
+  
+  // ⏱️ 長時間（約1〜2時間）の監視を行うため、Playwrightのデフォルトタイムアウトを無効化（0 = 無制限）
+  page.setDefaultTimeout(0); 
 
   page.on('dialog', async dialog => {
     console.log(`💬 【${acc.name}】ダイアログ検出: ${dialog.message()}`);
@@ -236,6 +237,7 @@ async function runLoginAndProcess(browser, acc) {
     await page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
+    // 元コードにあった直近リクエスト日時の取得処理（そのまま維持）
     const listUrl = acc.url.replace('/login/', '/rec_recruitments').replace('rec_recruitments', 'export_files');
     await page.goto(listUrl, { waitUntil: 'networkidle' }).catch(() => {});
     
@@ -250,7 +252,7 @@ async function runLoginAndProcess(browser, acc) {
 
     console.log(`👉 【${acc.name}】「ファイル取出予約」を実行します`);
     const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約")').first();
-    await exportBtn.waitFor({ state: 'visible', timeout: 30000 });
+    await exportBtn.waitFor({ state: 'visible' }); // timeoutを解除したため引数を調整
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
@@ -263,43 +265,37 @@ async function runLoginAndProcess(browser, acc) {
     await page.locator('a:has-text("取出ファイル一覧")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    // CSV完成の監視ループ (無限ループ防止)
-    console.log(`⏳ 【${acc.name}】CSV作成完了を監視します...`);
-    const dates = getTargetDates();
+    // CSV完成の監視ループ (2時間上限・2分間隔)
+    console.log(`⏳ 【${acc.name}】CSV作成完了を監視します（リクエスト日時のすぐ下の行を2分ごとに確認）...`);
+    
     let loopCount = 1;
-    const MAX_EXPORT_LOOPS = 20; // 最大20回（約10分）制限
+    const INTERVAL_MS = 120000; // 2分（120秒）
+    const MAX_EXPORT_LOOPS = 60; // 2分 × 60回 ＝ 120分（2時間上限）
     let finalDownloadLinkLocator = null;
 
     while (loopCount <= MAX_EXPORT_LOOPS) {
       const fullPageText = await page.innerText('body').catch(() => "");
-      const rows = page.locator('tr');
-      const rowCount = await rows.count().catch(() => 0);
-      let foundTarget = false;
+      
+      // 🎯 リクエスト日時のすぐ下のデータ行＝テーブルの2行目（nth(1)）にターゲットを完全固定
+      const targetRow = page.locator('tr').nth(1);
+      const rowText = await targetRow.innerText().catch(() => "");
 
-      for (let i = 1; i < rowCount; i++) {
-        const rowText = await rows.nth(i).innerText().catch(() => "");
-
-        if (rowText.includes(dates.matchTodayStr) && (rowText.includes("完了") || rowText.includes("成功")) && rowText.includes("rec_recruitments")) {
-          const timeMatch = rowText.match(/\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}/);
-          if (timeMatch) {
-            const currentIdxTimeStr = timeMatch[0];
-            if (currentIdxTimeStr !== lastRequestTimeStr || i === 1) {
-              console.log(`✅ 【${acc.name}】今回リクエストした完了CSV行を特定しました！ (日時: ${currentIdxTimeStr})`);
-              finalDownloadLinkLocator = rows.nth(i).locator('a[href*="rec_recruitments"]').first();
-              foundTarget = true;
-              break;
-            }
-          }
+      // ターゲット行が完了・成功状態になったかを判定
+      if ((rowText.includes("完了") || rowText.includes("成功")) && rowText.includes("rec_recruitments")) {
+        const timeMatch = rowText.match(/\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}/);
+        if (timeMatch) {
+          console.log(`✅ 【${acc.name}】今回リクエストした完了CSV行（すぐ下の行）を特定しました！ (日時: ${timeMatch[0]})`);
+          finalDownloadLinkLocator = targetRow.locator('a[href*="rec_recruitments"]').first();
+          break; // 条件一致で監視ループを抜ける
         }
       }
 
-      if (foundTarget) break;
-
       const progressMatch = fullPageText.match(/\d+\/\d+件出力中\s+残り約\d+分\d+秒/);
       const progressStr = progressMatch ? progressMatch[0] : (fullPageText.includes("進行中") ? "進行中" : "生成待ち...");
-      console.log(`⏳ 【${acc.name}】CSV生成待ち... (ループ: ${loopCount}/${MAX_EXPORT_LOOPS}) / 状態: ${progressStr}`);
+      console.log(`⏳ 【${acc.name}】CSV生成待ち... (ループ: ${loopCount}/${MAX_EXPORT_LOOPS}) / 状態: ${progressStr} / 現在の行テキスト: ${rowText.replace(/\s+/g, ' ')}`);
 
-      await page.waitForTimeout(30000); // 120秒から30秒へ短縮
+      // 指定された2分（120秒）待機
+      await page.waitForTimeout(INTERVAL_MS);
 
       const loopMenuIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
       await loopMenuIcon.hover().catch(() => {});
@@ -311,13 +307,14 @@ async function runLoginAndProcess(browser, acc) {
     }
 
     if (!finalDownloadLinkLocator) {
-      throw new Error("❌ CSV生成がタイムアウト、または対象行が見つかりませんでした。");
+      throw new Error("❌ CSV生成が2時間のタイムアウト上限に達したか、対象行が確認できませんでした。");
     }
 
     console.log(`📥 最新CSVのダウンロードリンクを確認中...`);
-    await finalDownloadLinkLocator.waitFor({ state: 'visible', timeout: 30000 });
+    await finalDownloadLinkLocator.waitFor({ state: 'visible' }); // timeoutを解除したため引数を調整
 
-    const downloadPromise = page.waitForEvent('download', { timeout: 300000 });
+    // 大容量CSVのダウンロードに備え、タイムアウトを無制限(0)に緩和
+    const downloadPromise = page.waitForEvent('download', { timeout: 0 });
     console.log(`📥 ダウンロードリンクをクリックします...`);
     await page.waitForTimeout(2000);
     await finalDownloadLinkLocator.click({ force: true });
@@ -351,7 +348,7 @@ async function runLoginAndProcess(browser, acc) {
   } catch (error) {
     console.log(`❌ 【${acc.name}】例外エラーが発生: ${error.message}`);
     await page.screenshot({ path: `error_${acc.name}.png`, fullPage: true }).catch(() => {});
-    throw error; // エラーを上に投げて確実に検知させる
+    throw error; 
   } finally {
     await context.close(); 
   }
@@ -361,7 +358,6 @@ async function runLoginAndProcess(browser, acc) {
   const browser = await chromium.launch();
   console.log("🏁 4大タスク一括処理を開始します。");
   
-  // GitHub Actionsでのゾンビ化を防ぐため、無限ループ(while(true))を撤廃し1回限りの実行に変更
   for (const acc of accounts) {
     console.log(`🚀 ==========================================`);
     console.log(`🚀 アカウント【${acc.name}】通常・PV（計4タスク）を開始`);

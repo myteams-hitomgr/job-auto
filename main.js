@@ -166,50 +166,51 @@ function processCSVFile(filePath, accountName) {
   return { normal: normalFiles, pv: pvFiles };
 }
 
-// 【全面書き換え】1枚目・2枚目の画像仕様に合わせたアップロード処理
-async function uploadCSVFile(page, acc, fileToUpload) {
-  console.log(`👉 【${acc.name}】募集一覧画面へ移動します...`);
+// 【手順に完全統合】募集一覧 ➔ ポップアップ ➔ ファイル選択 ➔ 実行 ➔ 一覧移動 ➔ 完了監視
+async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
+  // ① 募集一覧画面へ移動する
+  console.log(`👉 【${acc.name}】[${label}] 募集一覧画面へ移動します...`);
   const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
   await page.goto(recruitUrl, { waitUntil: 'networkidle' }).catch(() => {});
   await page.waitForTimeout(2000);
 
-  console.log(`👉 【${acc.name}】『ファイル取込予約』ボタンをクリックしてポップアップを開きます...`); // image_c8d1bf.png
+  // ② 『ファイル取込予約』ボタンをクリックしてポップアップを開く
+  console.log(`👉 【${acc.name}】[${label}] 『ファイル取込予約』ボタンをクリックします...`);
   const openModalBtn = page.locator('a:has-text("ファイル取込予約")').first();
   await openModalBtn.click();
   await page.waitForTimeout(2000);
 
-  console.log(`📤 【${acc.name}】ポップアップ内でファイル（${path.basename(fileToUpload)}）を選択中...`); // image_c8d222.png
+  // ③ ポップアップ内でファイルを選択する
+  console.log(`📤 【${acc.name}】[${label}] ファイル（${path.basename(fileToUpload)}）を選択中...`);
   const fileInput = await page.waitForSelector('input[type="file"]', { timeout: 0 });
   await fileInput.setInputFiles(fileToUpload);
   await page.waitForTimeout(2000);
   
-  console.log(`🚀 【${acc.name}】青色の『ファイル取込予約』実行ボタンをクリックします...`); // image_c8d222.png
+  // 青色の『ファイル取込予約』実行ボタンをクリックする
+  console.log(`🚀 【${acc.name}】[${label}] 青色の『ファイル取込予約』実行ボタンをクリックします...`);
   const doUploadBtn = page.locator('.modal-footer button:has-text("ファイル取込予約"), #cboxLoadedContent button:has-text("ファイル取込予約"), button:has-text("ファイル取込予約")').first();
   await doUploadBtn.click();
-  
-  console.log(`🚀 【${acc.name}】取込リクエストを送信しました。画面が落ち着くまで8秒待機します。`);
+  console.log(`🚀 【${acc.name}】[${label}] 取込リクエスト送信完了。8秒待機したあと進捗画面へ移動します。`);
   await page.waitForTimeout(8000);
-}
 
-// 【全面書き換え】3枚目・4枚目の画像仕様に合わせた「取込ファイル一覧」での監視処理
-async function goToImportListAndWatch(page, acc, label) {
-  console.log(`👉 【${acc.name}】上部メニューの矢印（ドロップダウン）をクリックします...`); // image_c8d5a2.png
+  // ④ メニューの矢印マークにカーソルを当てて『取込ファイル一覧』へ移動する
+  console.log(`👉 【${acc.name}】[${label}] メニューの矢印マークにカーソルを当てます...`);
   const arrowMenu = page.locator('li.dropdown a:has(.fa-refresh), li a:has(img[src*="arrow"]), .nav-tabs li:nth-child(5) a').first();
-  await arrowMenu.click();
-  await page.waitForTimeout(1000);
+  await arrowMenu.hover();
+  await page.waitForTimeout(1500); 
 
-  console.log(`👉 【${acc.name}】メニューから『取込ファイル一覧』を選択します...`); // image_c8d5a2.png
+  console.log(`👉 【${acc.name}】[${label}] メニューから『取込ファイル一覧』をクリックします...`);
   await page.locator('a:has-text("取込ファイル一覧")').first().click();
   await page.waitForLoadState('networkidle').catch(() => {});
   await page.waitForTimeout(2000);
 
-  console.log(`⏳ 【${acc.name}】[${label}] の取込完了（ステータス: 完了 / 詳細: 成功...）を監視します。`); // image_c8d8e6.png
-  
+  // ⑤ 『取込ファイル一覧』画面でステータスが完了になるのをじっと監視する（確認方法）
+  console.log(`⏳ 【${acc.name}】[${label}] 取込の進捗を監視中（ステータス: 完了 / 詳細: 成功...）`);
   let loopCount = 1;
   while (true) { 
-    await page.waitForTimeout(10000); // 重い処理のため10秒おきにチェック
+    await page.waitForTimeout(10000); // 10秒おきにチェック
 
-    // 画面にある「最新を表示する」ボタンがあれば押して最新状態にする
+    // 「最新を表示する」ボタンがあれば押して最新状態にする
     const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
     if (await refreshBtn.count() > 0) {
       await refreshBtn.click({ force: true }).catch(() => {});
@@ -220,25 +221,25 @@ async function goToImportListAndWatch(page, acc, label) {
     let statusText = "";
     let detailText = "";
 
-    // 1行目はヘッダーなので、2行目（データ最上段）をスキャン
+    // データ最上段（最新の取込履歴）をスキャン
     for (const row of rows) {
       const cells = await row.locator('td').all();
       if (cells.length >= 5) {
         const dateCell = await cells[0].evaluate(el => el.textContent || "");
         if (dateCell.includes('2026') || dateCell.includes('/') || dateCell.includes(':')) {
-          statusText = await cells[4].evaluate(el => el.textContent || ""); // ステータス列
-          detailText = await cells[5].evaluate(el => el.textContent || ""); // 詳細列
+          statusText = await cells[4].evaluate(el => el.textContent || ""); 
+          detailText = await cells[5].evaluate(el => el.textContent || ""); 
           break;
         }
       }
     }
 
     if (statusText.includes('完了') && (detailText.includes('成功') || detailText.includes('一部エラーあり'))) {
-      console.log(`✅ 【${acc.name}】[${label}] 取込処理が正常に「${statusText.trim()}（${detailText.trim()}）」となりました！`); // image_c8d8e6.png
+      console.log(`✅ 【${acc.name}】[${label}] 取込が正常に「${statusText.trim()}（${detailText.trim()}）」となりました！次のステップに進みます。`);
       break;
     } else {
       if (loopCount % 3 === 0) {
-        console.log(`⏳ 【${acc.name}】[${label}] 処理の完了を待っています... 現在のステータス: [${statusText.trim()}] [${detailText.trim()}]`);
+        console.log(`⏳ 【${acc.name}】[${label}] 処理の完了を待っています... 現在の状態: [${statusText.trim()}] [${detailText.trim()}]`);
       }
     }
     loopCount++;
@@ -248,7 +249,7 @@ async function goToImportListAndWatch(page, acc, label) {
 async function runLoginAndProcess(browser, acc) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
-  page.setDefaultTimeout(0); // すべてのタイムアウト制限を解除
+  page.setDefaultTimeout(0); // タイムアウト制限を完全に排除
 
   page.on('dialog', async dialog => {
     console.log(`💬 【${acc.name}】ダイアログ検出: ${dialog.message()}`);
@@ -256,33 +257,40 @@ async function runLoginAndProcess(browser, acc) {
   });
 
   try {
+    // 1. ログイン
     await page.goto(acc.url, { waitUntil: 'networkidle' }); 
     await page.locator('input[type="text"], input[type="email"], input[name*="login"]').first().fill(acc.id);
     await page.locator('input[type="password"]').first().fill(acc.password);
     await page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
+    // 募集一覧画面へ移動
     const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
     await page.goto(recruitUrl, { waitUntil: 'networkidle' });
 
+    // 2. 『ファイル取出予約』を押してCSVを作る
     console.log(`👉 【${acc.name}】「ファイル取出予約」を実行します（全求人対象）`);
-    const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約")').nth(0); // 1番目のボタン（取出）
+    const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約")').nth(0); 
     await exportBtn.waitFor({ state: 'visible', timeout: 0 });
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
-    // 取出ファイル一覧ページへ移動（上部ドロップダウン経由）
+    // メニューの矢印マークにカーソルを当てて『取出ファイル一覧』へ移動
+    console.log(`👉 【${acc.name}】メニューの矢印マークにカーソルを当てます...`);
     const arrowMenu = page.locator('li.dropdown a:has(.fa-refresh), li a:has(img[src*="arrow"]), .nav-tabs li:nth-child(5) a').first();
-    await arrowMenu.click();
-    await page.waitForTimeout(1000);
+    await arrowMenu.hover();
+    await page.waitForTimeout(1500);
+    
+    console.log(`👉 【${acc.name}】『取出ファイル一覧』をクリックします...`);
     await page.locator('a:has-text("取出ファイル一覧")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
+    // CSV抽出の完了を監視し、ダウンロードする
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...（※30分以上かかる場合があります）`);
     let loopCount = 1;
 
     while (true) {
-      await page.waitForTimeout(10000); // 10秒おきに確認
+      await page.waitForTimeout(10000); 
 
       const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
       if (await refreshBtn.count() > 0) {
@@ -344,34 +352,27 @@ async function runLoginAndProcess(browser, acc) {
     await download.saveAs(downloadPath);
     console.log(`✅ 【${acc.name}】RAWデータのダウンロード・保存に成功しました！`);
 
+    // 3. ダウンロードしたファイルをプログラムで自動編集（4パターン）
     const processed = processCSVFile(downloadPath, acc.name);
     if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 
     // =========================================================
-    // 4大タスクの連続アップロード処理（画像の手順を完全再現）
+    // 4. 4つのファイルを順番にアップロード（1回ずつ募集一覧に戻る）
     // =========================================================
     
-    // 【1番目】 通常版：非掲載
-    console.log(`🔷 【${acc.name}】タスク① [通常版・非掲載] を開始します`);
-    await uploadCSVFile(page, acc, processed.normal.path1);
-    await goToImportListAndWatch(page, acc, '通常版・非掲載');
+    // 【1枚目】 通常版：非掲載
+    await uploadAndWatchSingleFile(page, acc, processed.normal.path1, '①通常版・非掲載');
 
-    // 【2番目】 通常版：掲載
-    console.log(`🔷 【${acc.name}】タスク② [通常版・掲載] を開始します`);
-    await uploadCSVFile(page, acc, processed.normal.path2);
-    await goToImportListAndWatch(page, acc, '通常版・掲載');
+    // 【2枚目】 通常版：掲載
+    await uploadAndWatchSingleFile(page, acc, processed.normal.path2, '②通常版・掲載');
     
-    // 【3番目】 PV版：非掲載
-    console.log(`🔶 【${acc.name}】タスク③ [PV版・非掲載] を開始します`);
-    await uploadCSVFile(page, acc, processed.pv.path1);
-    await goToImportListAndWatch(page, acc, 'PV版・非掲載');
+    // 【3枚目】 PV版：非掲載
+    await uploadAndWatchSingleFile(page, acc, processed.pv.path1, '③PV版・非掲載');
 
-    // 【4番目】 PV版：掲載
-    console.log(`🔶 【${acc.name}】タスク④ [PV版・掲載] を開始します`);
-    await uploadCSVFile(page, acc, processed.pv.path2);
-    await goToImportListAndWatch(page, acc, 'PV版・掲載');
+    // 【4枚目】 PV版：掲載
+    await uploadAndWatchSingleFile(page, acc, processed.pv.path2, '④PV版・掲載');
 
-    console.log(`🎉 【${acc.name}】通常版・PV版を含む全 4 タスクの工程が正常終了しました。`);
+    console.log(`🎉 【${acc.name}】4つのファイルのアップロードと完了監視がすべて正常終了しました！`);
 
   } catch (error) {
     console.log(`⚠️ 【${acc.name}】処理中にエラーが発生: ${error.message}`);

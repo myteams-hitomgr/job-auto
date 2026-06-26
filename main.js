@@ -54,7 +54,7 @@ function toCSVLine(arr) {
 }
 
 function getTargetDates() {
-  const now = new Date();
+  const now = new Date(); // 2026年ベース
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
@@ -62,8 +62,7 @@ function getTargetDates() {
   return {
     hyphenToday: `${yyyy}/${now.getMonth() + 1}/${now.getDate()}`,
     flatToday: `${yyyy}${mm}${dd}`,
-    future10Years: `${yyyy + 10}/${now.getMonth() + 1}/${now.getDate()}`,
-    matchTodayStr: `${yyyy}/${mm}/${dd}`
+    future10Years: `${yyyy + 10}/${now.getMonth() + 1}/${now.getDate()}`
   };
 }
 
@@ -189,45 +188,47 @@ async function uploadCSVFile(page, acc, fileToUpload) {
 }
 
 async function waitForImportSuccess(page, acc, label) {
-  console.log(`⏳ 【${acc.name}】[${label}] 取込完了を監視中...`);
+  console.log(`👉 【${acc.name}】取込状況を確認するため、メニューの矢印から「取込ファイル一覧」を再開きます...`);
+  const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
+  await menuHoverIcon.hover();
+  await page.waitForTimeout(1500);
+  await page.locator('a:has-text("取込ファイル一覧")').first().click();
+  await page.waitForLoadState('networkidle').catch(() => {});
+
+  console.log(`⏳ 【${acc.name}】[${label}] 取込完了（ステータス: 完了 / 詳細: 成功）を監視中...`);
   
   let loopCount = 1;
-  const MAX_IMPORT_LOOPS = 20; // 最大20回（約10分）でタイムアウト制限
-  
-  while (loopCount <= MAX_IMPORT_LOOPS) { 
-    console.log(`👉 取込状況を確認するため「取込ファイル一覧」を開きます... (状況確認: ${loopCount}回目)`);
-    const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
-    await menuHoverIcon.hover().catch(() => {});
-    await page.waitForTimeout(1500);
-    await page.locator('a:has-text("取込ファイル一覧")').first().click().catch(() => {});
-    await page.waitForLoadState('networkidle').catch(() => {});
-
-    const bodyText = await page.innerText('body').catch(() => '');
-    
-    if (bodyText.includes('完了') || bodyText.includes('成功')) {
-      console.log(`✅ 【${acc.name}】[${label}] 取込ステータス「完了」または「成功」を確認しました！`);
-      return;
+  while (true) { 
+    const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
+    if (await refreshBtn.isVisible().catch(() => false)) {
+      await refreshBtn.click().catch(() => {});
     } else {
-      console.log(`⏳ 【${acc.name}】[${label}] まだ処理中のため、30秒待機します...`);
+      await page.reload().catch(() => {});
     }
+    await page.waitForTimeout(5000); 
 
-    await page.waitForTimeout(30000); 
+    // 取込画面の1行目に「完了」と「成功」があるか直接チェック
+    const firstRowText = await page.locator('table tr').nth(1).innerText().catch(() => '');
+    if (firstRowText.includes('完了') && firstRowText.includes('成功')) {
+      console.log(`✅ 【${acc.name}】[${label}] 取込が正常に「完了・成功」しました！`);
+      break;
+    } else {
+      if (loopCount % 6 === 0) {
+        console.log(`⏳ 【${acc.name}】[${label}] 最新状況に更新しながら、完了を待っています...`);
+      }
+    }
     loopCount++;
   }
-  
-  throw new Error(`⚠️ 【${acc.name}】[${label}] 取込処理がタイムアウトしました。`);
 }
 
 async function runLoginAndProcess(browser, acc) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
-  
-  // ⏱️ 長時間（約1〜2時間）の監視を行うため、Playwrightのデフォルトタイムアウトを無効化（0 = 無制限）
   page.setDefaultTimeout(0); 
 
   page.on('dialog', async dialog => {
     console.log(`💬 【${acc.name}】ダイアログ検出: ${dialog.message()}`);
-    await dialog.accept().catch(() => {});
+    await dialog.accept();
   });
 
   try {
@@ -237,22 +238,12 @@ async function runLoginAndProcess(browser, acc) {
     await page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    // 元コードにあった直近リクエスト日時の取得処理（そのまま維持）
-    const listUrl = acc.url.replace('/login/', '/rec_recruitments').replace('rec_recruitments', 'export_files');
-    await page.goto(listUrl, { waitUntil: 'networkidle' }).catch(() => {});
-    
-    const firstRow = page.locator('tr').nth(1);
-    const firstRowText = await firstRow.innerText().catch(() => "");
-    const timeMatchBefore = firstRowText.match(/\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}/);
-    const lastRequestTimeStr = timeMatchBefore ? timeMatchBefore[0] : "";
-    console.log(`...`);
-
     const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
     await page.goto(recruitUrl, { waitUntil: 'networkidle' });
 
-    console.log(`👉 【${acc.name}】「ファイル取出予約」を実行します`);
+    console.log(`👉 【${acc.name}】「ファイル取出予約」を実行します（全求人対象）`);
     const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約")').first();
-    await exportBtn.waitFor({ state: 'visible' }); // timeoutを解除したため引数を調整
+    await exportBtn.waitFor({ state: 'visible', timeout: 30000 });
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
@@ -265,90 +256,63 @@ async function runLoginAndProcess(browser, acc) {
     await page.locator('a:has-text("取出ファイル一覧")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    // CSV完成の監視ループ (2時間上限・2分間隔)
-    console.log(`⏳ 【${acc.name}】CSV作成完了を監視します（リクエスト日時のすぐ下の行を2分ごとに確認）...`);
-    
+    console.log(`⏳ 【${acc.name}】CSV抽出の完了を無限待機中（ダウンロードリンクを直接狙い撃ちします）...`);
     let loopCount = 1;
-    const INTERVAL_MS = 120000; // 2分（120秒）
-    const MAX_EXPORT_LOOPS = 60; // 2分 × 60回 ＝ 120分（2時間上限）
-    let finalDownloadLinkLocator = null;
-
-    while (loopCount <= MAX_EXPORT_LOOPS) {
-      const fullPageText = await page.innerText('body').catch(() => "");
-      
-      // 🎯 リクエスト日時のすぐ下のデータ行＝テーブルの2行目（nth(1)）にターゲットを完全固定
-      const targetRow = page.locator('tr').nth(1);
-      const rowText = await targetRow.innerText().catch(() => "");
-
-      // ターゲット行が完了・成功状態になったかを判定
-      if ((rowText.includes("完了") || rowText.includes("成功")) && rowText.includes("rec_recruitments")) {
-        const timeMatch = rowText.match(/\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}/);
-        if (timeMatch) {
-          console.log(`✅ 【${acc.name}】今回リクエストした完了CSV行（すぐ下の行）を特定しました！ (日時: ${timeMatch[0]})`);
-          finalDownloadLinkLocator = targetRow.locator('a[href*="rec_recruitments"]').first();
-          break; // 条件一致で監視ループを抜ける
-        }
+    while (true) {
+      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
+      if (await refreshBtn.isVisible().catch(() => false)) {
+        await refreshBtn.click().catch(() => {});
+      } else {
+        await page.reload().catch(() => {});
       }
+      await page.waitForTimeout(5000);
 
-      const progressMatch = fullPageText.match(/\d+\/\d+件出力中\s+残り約\d+分\d+秒/);
-      const progressStr = progressMatch ? progressMatch[0] : (fullPageText.includes("進行中") ? "進行中" : "生成待ち...");
-      console.log(`⏳ 【${acc.name}】CSV生成待ち... (ループ: ${loopCount}/${MAX_EXPORT_LOOPS}) / 状態: ${progressStr} / 現在の行テキスト: ${rowText.replace(/\s+/g, ' ')}`);
-
-      // 指定された2分（120秒）待機
-      await page.waitForTimeout(INTERVAL_MS);
-
-      const loopMenuIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
-      await loopMenuIcon.hover().catch(() => {});
-      await page.waitForTimeout(1000);
-      await page.locator('a:has-text("取出ファイル一覧")').first().click({ force: true }).catch(() => {});
-      await page.waitForLoadState('networkidle').catch(() => {});
-
+      // 🔥 文字判定をやめ、1行目にダウンロードリンク（aタグ）が出現したかを直接検知！
+      const downloadLinkExists = await page.locator('table tr').nth(1).locator('a[href*=".csv"], a:has-text("ダウンロード")').first().isVisible().catch(() => false);
+      if (downloadLinkExists) {
+        console.log(`✅ 【${acc.name}】ダウンロード可能なファイルを検知しました！`);
+        break;
+      }
+      if (loopCount % 6 === 0) {
+        console.log(`⏳ 【${acc.name}】画面更新しながらファイルの生成を待っています...`);
+      }
       loopCount++;
     }
 
-    if (!finalDownloadLinkLocator) {
-      throw new Error("❌ CSV生成が2時間のタイムアウト上限に達したか、対象行が確認できませんでした。");
-    }
-
-    console.log(`📥 最新CSVのダウンロードリンクを確認中...`);
-    await finalDownloadLinkLocator.waitFor({ state: 'visible' }); // timeoutを解除したため引数を調整
-
-    // 大容量CSVのダウンロードに備え、タイムアウトを無制限(0)に緩和
-    const downloadPromise = page.waitForEvent('download', { timeout: 0 });
-    console.log(`📥 ダウンロードリンクをクリックします...`);
-    await page.waitForTimeout(2000);
-    await finalDownloadLinkLocator.click({ force: true });
-
-    const download = await downloadPromise;
+    // 4. CSVダウンロード
+    const downloadLink = page.locator('table tr').nth(1).locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
+    const [download] = await Promise.all([page.waitForEvent('download'), downloadLink.click()]);
     const downloadPath = path.join(__dirname, `${acc.name}_raw_data.csv`);
     await download.saveAs(downloadPath);
-    console.log(`💾 【${acc.name}】CSVダウンロード完了: ${downloadPath}`);
 
+    // 5. データ内部加工
     const processed = processCSVFile(downloadPath, acc.name);
     if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 
-    console.log(`🔷 【${acc.name}】タスク① [通常版・非掲載] を開始`);
+    // ========================================================
+    // 4つの連続タスク
+    // ========================================================
+    console.log(`🔷 【${acc.name}】タスク① [通常版・非掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.normal.path1);
     await waitForImportSuccess(page, acc, '通常版・非掲載');
 
-    console.log(`🔷 【${acc.name}】タスク② [通常版・掲載] を開始`);
+    console.log(`🔷 【${acc.name}】タスク② [通常版・掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.normal.path2);
     await page.waitForTimeout(5000); 
     
-    console.log(`🔶 【${acc.name}】タスク③ [PV版・非掲載] を開始`);
+    console.log(`🔶 【${acc.name}】タスク③ [PV版・非掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.pv.path1);
     await waitForImportSuccess(page, acc, 'PV版・非掲載');
 
-    console.log(`🔶 【${acc.name}】タスク④ [PV版・掲載] を開始`);
+    console.log(`🔶 【${acc.name}】タスク④ [PV版・掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.pv.path2);
     await page.waitForTimeout(8000); 
 
-    console.log(`🎉 【${acc.name}】全 4 タスクの工程が正常終了しました。`);
+    console.log(`🎉 【${acc.name}】通常版・PV版を含む全4タスクの工程が正常終了しました。`);
 
   } catch (error) {
-    console.log(`❌ 【${acc.name}】例外エラーが発生: ${error.message}`);
-    await page.screenshot({ path: `error_${acc.name}.png`, fullPage: true }).catch(() => {});
-    throw error; 
+    console.log(`⚠️ 【${acc.name}】処理中にエラーが発生: ${error.message}`);
+    await page.screenshot({ path: `error_${acc.name}.png`, fullPage: true });
   } finally {
     await context.close(); 
   }
@@ -356,23 +320,22 @@ async function runLoginAndProcess(browser, acc) {
 
 (async () => {
   const browser = await chromium.launch();
-  console.log("🏁 4大タスク一括処理を開始します。");
+  console.log("🏁 4大タスク一括・交互連続ループを開始します。(停止は Ctrl+C)");
   
-  for (const acc of accounts) {
-    console.log(`🚀 ==========================================`);
-    console.log(`🚀 アカウント【${acc.name}】通常・PV（計4タスク）を開始`);
-    console.log(`🚀 ==========================================`);
-    
-    try {
-      await runLoginAndProcess(browser, acc);
-    } catch (err) {
-      console.log(`⚠️ アカウント【${acc.name}】でエラーが発生したため、スキップして次へ向かいます。`);
+  while (true) {
+    for (const acc of accounts) {
+      console.log(`🚀 ==========================================`);
+      console.log(`🚀 アカウント【${acc.name}】通常・PV（計4タスク）を開始`);
+      console.log(`🚀 ==========================================`);
+      
+      try {
+        await runLoginAndProcess(browser, acc);
+      } catch (err) {
+        console.log(`⚠️ アカウント【${acc.name}】で例外エラー。次のアカウントへリレーします。`);
+      }
+      
+      console.log(`💤 セッション競合防止のため、30秒間のインターバルを挟みます...`);
+      await new Promise(resolve => setTimeout(resolve, 30000));
     }
-    
-    console.log(`💤 30秒間のインターバルを挟みます...`);
-    await new Promise(resolve => setTimeout(resolve, 30000));
   }
-  
-  console.log("🏁 全アカウントの処理工程が終了しました。ブラウザを閉じます。");
-  await browser.close();
 })();

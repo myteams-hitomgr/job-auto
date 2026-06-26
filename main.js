@@ -303,11 +303,11 @@ async function runLoginAndProcess(browser, acc) {
       loopCount++;
     }
 
-    // 【大幅修正】ダウンロード用リンクが安全に出現するよう、完了検知後にページを一度リロードしてDOMをクリーンにする
-    console.log(`👉 【${acc.name}】ダウンロードリンクを確実にするため、一度画面を最新の状態にリロードします...`);
-    await page.reload({ waitUntil: 'networkidle' }).catch(() => {});
-    await page.waitForTimeout(3000); 
+    // 【修正箇所】完了直後のHTML書き換えバグを防ぐため、2秒待ってから「最新のデータ行」をピンポイントで再取得する
+    console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
+    await page.waitForTimeout(2000); 
     
+    // 完全に確定した最新のテーブル行から、直接ダウンロード要素を探す
     const finalRows = await page.locator('table tr').all();
     let downloadLink = null;
     
@@ -316,7 +316,7 @@ async function runLoginAndProcess(browser, acc) {
       if (cells.length >= 4) {
         const dateText = await cells[0].evaluate(el => el.textContent || "");
         if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
-          // Aタグだけでなく、HITO-Managerの様々なダウンロードボタン形式（テキスト、a、button）に対応できるようセレクターを拡張
+          // ボタンの Stale 化を防ぐため、行の中から「ダウンロード」文言やCSVリンクを持つ要素をダイレクトに指定
           downloadLink = row.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
           break;
         }
@@ -324,13 +324,13 @@ async function runLoginAndProcess(browser, acc) {
     }
 
     if (!downloadLink) {
-      throw new Error("リロード後、CSVのダウンロードリンクを特定できませんでした。");
+      throw new Error("CSVのダウンロードリンクを特定できませんでした。");
     }
 
-    console.log(`👉 【${acc.name}】ダウンロードを実行します...`);
+    console.log(`👉 【${acc.name}】ダウンロードを開始します...`);
     const [download] = await Promise.all([
       page.waitForEvent('download'), 
-      downloadLink.click({ force: true }) // 隠れた要素でも確実に発火させるため force オプションを付与
+      downloadLink.click({ force: true }) // 描画直後の要素でも確実にクリックを当てる
     ]);
     
     const downloadPath = path.join(__dirname, `${acc.name}_raw_data.csv`);
@@ -360,7 +360,7 @@ async function runLoginAndProcess(browser, acc) {
     await uploadCSVFile(page, acc, processed.pv.path2);
     await waitForImportSuccess(page, acc, 'PV版・掲載');
 
-    console.log(`🎉 【${acc.name}】通常版・PV版を含む全4タスクの工程が正常終了しました。`);
+    console.log(`🎉 【${acc.name}】通常版・PV版を含む全 4 タスクの工程が正常終了しました。`);
 
   } catch (error) {
     console.log(`⚠️ 【${acc.name}】処理中にエラーが発生: ${error.message}`);

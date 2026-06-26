@@ -199,7 +199,17 @@ async function waitForImportSuccess(page, acc, label) {
   
   let loopCount = 1;
   while (true) { 
-    // 取込の確認も同様に2分（120秒）スパンで安全に巡回
+    const firstRow = page.locator('table tbody tr').first();
+    const firstRowText = await firstRow.innerText().catch(() => '');
+    
+    if (firstRowText.includes('完了') && firstRowText.includes('成功')) {
+      console.log(`✅ 【${acc.name}】[${label}] 取込が正常に「完了・成功」しました！`);
+      break;
+    } else {
+      console.log(`⏳ 【${acc.name}】[${label}] 取込状況 (${loopCount}回目): ${firstRowText.replace(/\n/g, ' ')}`);
+    }
+
+    // 2分待機してからメニュー再選択で画面を綺麗に更新
     await page.waitForTimeout(120000); 
     const menuIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
     await menuIcon.hover().catch(() => {});
@@ -207,13 +217,6 @@ async function waitForImportSuccess(page, acc, label) {
     await page.locator('a:has-text("取込ファイル一覧")').first().click().catch(() => {});
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    const firstRowText = await page.locator('table tbody tr').first().innerText().catch(() => '');
-    if (firstRowText.includes('完了') && firstRowText.includes('成功')) {
-      console.log(`✅ 【${acc.name}】[${label}] 取込が正常に「完了・成功」しました！`);
-      break;
-    } else {
-      console.log(`⏳ 【${acc.name}】[${label}] 取込監視中 (${loopCount}回目) / 現在の状況: ${firstRowText.replace(/\n/g, ' ')}`);
-    }
     loopCount++;
   }
 }
@@ -267,7 +270,7 @@ async function runLoginAndProcess(browser, acc) {
     console.log(`📸 【${acc.name}】取出ファイル一覧のスクリーンショット・HTMLを保存しました。`);
 
     // ==========================================
-    // 3. CSV完成の監視 (2分（120秒）おきにメニューを開き直すロジック)
+    // 3. CSV完成の監視 (最新の1行目ピンポイント監視・即ログ出力版)
     // ==========================================
     console.log(`⏳ 【${acc.name}】CSV作成完了を監視します...`);
 
@@ -275,30 +278,23 @@ async function runLoginAndProcess(browser, acc) {
     let targetRowLocator = null;
 
     while (true) {
-      const rows = page.locator('table tbody tr');
-      const count = await rows.count().catch(() => 0);
-      let found = false;
+      // 🎯 必ず一番上の行（最新のリクエスト）だけを見る
+      const topRow = page.locator('table tbody tr').first();
+      const statusText = await topRow.locator('td').nth(2).innerText().catch(() => "");
+      const detailText = await topRow.locator('td').nth(3).innerText().catch(() => "");
+      const fullRowText = await topRow.innerText().catch(() => "データなし");
 
-      for (let i = 0; i < count; i++) {
-        const row = rows.nth(i);
-        const statusText = await row.locator('td').nth(2).innerText().catch(() => "");
-        const detailText = await row.locator('td').nth(3).innerText().catch(() => "");
+      // 進捗を待機前にコンソールへ即時出力（生存確認ログ）
+      console.log(`⏳ 【${acc.name}】CSV生成待ち... (${loopCount}回目) / 最新行の状態: ${fullRowText.replace(/\n/g, ' ')}`);
 
-        if (statusText.includes("完了") && detailText.includes(".csv")) {
-          console.log(`✅ 【${acc.name}】CSVの完成行を特定しました (上から ${i + 1} 行目)`);
-          targetRowLocator = row;
-          found = true;
-          break;
-        }
+      // 1行目が「完了」になり、詳細に「.csv」のダウンロードリンクが出現したらブレイク
+      if (statusText.includes("完了") && detailText.includes(".csv")) {
+        console.log(`✅ 【${acc.name}】最新リクエストのCSV作成完了を確認しました！`);
+        targetRowLocator = topRow;
+        break;
       }
 
-      if (found) break;
-
-      // 現在の進捗状況をログに出力
-      const topRowText = await page.locator('table tbody tr').first().innerText().catch(() => "データなし");
-      console.log(`⏳ 【${acc.name}】CSV生成待ち... (${loopCount}回目) / 現在の1行目の状態: ${topRowText.replace(/\n/g, ' ')}`);
-
-      // 🟢 2分間（120秒）待機してからメニューの矢印から開き直して画面を書き換える
+      // 🟢 2分間（120秒）待機してから、上部メニューの矢印から「取出ファイル一覧」を開き直して画面を書き換える
       await page.waitForTimeout(120000);
 
       const loopMenuIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();

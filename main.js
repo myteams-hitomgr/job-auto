@@ -266,6 +266,8 @@ console.log(`📸 【${acc.name}】取出ファイル一覧のスクリーンシ
 
 console.log(`⏳ 【${acc.name}】CSV作成完了を監視します...`);
 
+let loopCount = 1;
+
 while (true) {
 
   const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
@@ -278,8 +280,8 @@ while (true) {
 
   await page.waitForTimeout(10000);
 
-  // 一番上の行を取得
-  const firstRow = page.locator('table tbody tr').first();
+  // 1行目を取得
+  const firstRow = page.locator('table tr').nth(1);
 
   const rowText = await firstRow.innerText().catch(() => "");
 
@@ -287,22 +289,21 @@ while (true) {
   console.log(rowText);
   console.log("======================");
 
-  // 「完了」かつCSVファイル名が表示されたら終了
   if (
     rowText.includes("完了") &&
     rowText.includes("rec_recruitments_") &&
     rowText.includes(".csv")
   ) {
-
     console.log(`✅ 【${acc.name}】CSV完成を検知しました`);
-
     break;
   }
 
-}
+  if (loopCount % 6 === 0) {
+    console.log(`⏳ 【${acc.name}】CSV生成待ち... (${loopCount})`);
+  }
 
-loopCount++;
-    }
+  loopCount++;
+}
 
     // 4. CSVダウンロード
   const downloadLink = page

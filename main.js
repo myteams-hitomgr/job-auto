@@ -141,11 +141,17 @@ function processCSVFile(filePath, accountName) {
     allRows.push(row);
   }
 
+  // 【修正箇所】通常版の絞り込み条件をご指定通りに修正
   const normalFiltered = allRows.filter(row => {
     const valGG = row[idxGG].replace(/"/g, '').trim();
     const valGH = row[idxGH].replace(/"/g, '').trim();
-    if (valGG !== '0' && valGG !== '') return false;
+    
+    // GG列が「0」または「空欄」のものは除外（＝「0」でも「空欄」でもないものだけ残す）
+    if (valGG === '0' || valGG === '') return false;
+    
+    // GH列が「0」または「空欄」のものは除外（＝「0」以外かつ「空欄」ではないものだけ残す）
     if (valGH === '0' || valGH === '') return false;
+    
     return true;
   });
 
@@ -303,9 +309,8 @@ async function runLoginAndProcess(browser, acc) {
       loopCount++;
     }
 
-    // 【大幅改善】DOM失効によるStaleエラーを防ぐため、ループ脱出後に最新のテーブルから「最初のデータ行」のダウンロードリンクを毎回ダイレクトに捕捉します
     console.log(`👉 【${acc.name}】ダウンロード用リンクを安全に再スキャン中...`);
-    await page.waitForTimeout(2000); // 念のためリンクがDOMに描画されるのを2秒待つ
+    await page.waitForTimeout(2000); 
     
     const finalRows = await page.locator('table tr').all();
     let downloadLink = null;
@@ -315,7 +320,6 @@ async function runLoginAndProcess(browser, acc) {
       if (cells.length >= 4) {
         const dateText = await cells[0].evaluate(el => el.textContent || "");
         if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
-          // 条件を満たす最初のデータ行の中にあるダウンロードリンクを直接取得
           downloadLink = row.locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
           break;
         }
@@ -326,14 +330,12 @@ async function runLoginAndProcess(browser, acc) {
       throw new Error("CSVのダウンロードリンクを再特定できませんでした。");
     }
 
-    // リンクが表示されるのを待ってクリック
     await downloadLink.waitFor({ state: 'visible', timeout: 15000 });
     const [download] = await Promise.all([page.waitForEvent('download'), downloadLink.click()]);
     
     const downloadPath = path.join(__dirname, `${acc.name}_raw_data.csv`);
     await download.saveAs(downloadPath);
 
-    // ⭐ ここで保存されたCSVに対して、ファイルの加工・編集処理（processCSVFile）が自動実行されます
     const processed = processCSVFile(downloadPath, acc.name);
     if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 

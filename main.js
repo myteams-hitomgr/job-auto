@@ -141,17 +141,11 @@ function processCSVFile(filePath, accountName) {
     allRows.push(row);
   }
 
-  // 【修正箇所】通常版の絞り込み条件をご指定通りに修正
   const normalFiltered = allRows.filter(row => {
     const valGG = row[idxGG].replace(/"/g, '').trim();
     const valGH = row[idxGH].replace(/"/g, '').trim();
-    
-    // GG列が「0」または「空欄」のものは除外（＝「0」でも「空欄」でもないものだけ残す）
     if (valGG === '0' || valGG === '') return false;
-    
-    // GH列が「0」または「空欄」のものは除外（＝「0」以外かつ「空欄」ではないものだけ残す）
     if (valGH === '0' || valGH === '') return false;
-    
     return true;
   });
 
@@ -309,8 +303,10 @@ async function runLoginAndProcess(browser, acc) {
       loopCount++;
     }
 
-    console.log(`👉 【${acc.name}】ダウンロード用リンクを安全に再スキャン中...`);
-    await page.waitForTimeout(2000); 
+    // 【大幅修正】ダウンロード用リンクが安全に出現するよう、完了検知後にページを一度リロードしてDOMをクリーンにする
+    console.log(`👉 【${acc.name}】ダウンロードリンクを確実にするため、一度画面を最新の状態にリロードします...`);
+    await page.reload({ waitUntil: 'networkidle' }).catch(() => {});
+    await page.waitForTimeout(3000); 
     
     const finalRows = await page.locator('table tr').all();
     let downloadLink = null;
@@ -320,40 +316,49 @@ async function runLoginAndProcess(browser, acc) {
       if (cells.length >= 4) {
         const dateText = await cells[0].evaluate(el => el.textContent || "");
         if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
-          downloadLink = row.locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
+          // Aタグだけでなく、HITO-Managerの様々なダウンロードボタン形式（テキスト、a、button）に対応できるようセレクターを拡張
+          downloadLink = row.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
           break;
         }
       }
     }
 
     if (!downloadLink) {
-      throw new Error("CSVのダウンロードリンクを再特定できませんでした。");
+      throw new Error("リロード後、CSVのダウンロードリンクを特定できませんでした。");
     }
 
-    await downloadLink.waitFor({ state: 'visible', timeout: 15000 });
-    const [download] = await Promise.all([page.waitForEvent('download'), downloadLink.click()]);
+    console.log(`👉 【${acc.name}】ダウンロードを実行します...`);
+    const [download] = await Promise.all([
+      page.waitForEvent('download'), 
+      downloadLink.click({ force: true }) // 隠れた要素でも確実に発火させるため force オプションを付与
+    ]);
     
     const downloadPath = path.join(__dirname, `${acc.name}_raw_data.csv`);
     await download.saveAs(downloadPath);
+    console.log(`✅ 【${acc.name}】RAWデータのダウンロード・保存に成功しました！`);
 
     const processed = processCSVFile(downloadPath, acc.name);
     if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 
+    // 【1番目】 通常版：非掲載 ファイルの取込と監視
     console.log(`🔷 【${acc.name}】タスク① [通常版・非掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.normal.path1);
     await waitForImportSuccess(page, acc, '通常版・非掲載');
 
+    // 【2番目】 通常版：掲載 ファイルの取込と監視
     console.log(`🔷 【${acc.name}】タスク② [通常版・掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.normal.path2);
-    await page.waitForTimeout(5000); 
+    await waitForImportSuccess(page, acc, '通常版・掲載');
     
+    // 【3番目】 PV版：非掲載 ファイルの取込と監視
     console.log(`🔶 【${acc.name}】タスク③ [PV版・非掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.pv.path1);
     await waitForImportSuccess(page, acc, 'PV版・非掲載');
 
+    // 【4番目】 PV版：掲載 ファイルの取込と監視
     console.log(`🔶 【${acc.name}】タスク④ [PV版・掲載] を開始します`);
     await uploadCSVFile(page, acc, processed.pv.path2);
-    await page.waitForTimeout(8000); 
+    await waitForImportSuccess(page, acc, 'PV版・掲載');
 
     console.log(`🎉 【${acc.name}】通常版・PV版を含む全4タスクの工程が正常終了しました。`);
 

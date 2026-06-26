@@ -262,7 +262,13 @@ await page.screenshot({
   fullPage: true
 });
 
-console.log(`📸 【${acc.name}】取出ファイル一覧のスクリーンショットを保存しました。`);
+fs.writeFileSync(
+  `after_open_list_${acc.name}.html`,
+  await page.content(),
+  "utf8"
+);
+
+console.log(`📸 【${acc.name}】取出ファイル一覧のスクリーンショット・HTMLを保存しました。`);
 
 console.log(`⏳ 【${acc.name}】CSV作成完了を監視します...`);
 

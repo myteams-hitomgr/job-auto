@@ -203,13 +203,23 @@ async function waitForImportSuccess(page, acc, label) {
     await page.waitForTimeout(5000); 
 
     // 取込画面の1行目（リクエスト日時のすぐ下の行）をチェック
-    const firstRowText = await page.locator('table tr').nth(1).innerText().catch(() => '');
-    if (firstRowText.includes('完了') && firstRowText.includes('成功')) {
+    const firstRow = page.locator('table tr').nth(1);
+    const cells = firstRow.locator('td');
+    const cellCount = await cells.count().catch(() => 0);
+    
+    let statusText = "";
+    let detailText = "";
+    if (cellCount >= 4) {
+      statusText = await cells.nth(2).innerText().catch(() => "");
+      detailText = await cells.nth(3).innerText().catch(() => "");
+    }
+
+    if (statusText.includes('完了') && detailText.includes('成功')) {
       console.log(`✅ 【${acc.name}】[${label}] 取込が正常に「完了・成功」しました！`);
       break;
     } else {
       if (loopCount % 6 === 0) {
-        console.log(`⏳ 【${acc.name}】[${label}] 画面の自動更新を待ちながら、完了ステータスを確認中...`);
+        console.log(`⏳ 【${acc.name}】[${label}] 画面の自動更新を待ちながら、完了ステータスを確認中... 現在の状態: [${statusText}] ${detailText}`);
       }
     }
     loopCount++;
@@ -258,23 +268,33 @@ async function runLoginAndProcess(browser, acc) {
       await page.waitForTimeout(5000);
 
       const firstRow = page.locator('table tr').nth(1);
-      const rowText = await firstRow.innerText().catch(() => '');
+      
+      // 各セル（td）から個別テキストを取得して、不完全な結合を回避する
+      const cells = firstRow.locator('td');
+      const cellCount = await cells.count().catch(() => 0);
+      
+      let statusText = "";
+      let detailText = "";
+      if (cellCount >= 4) {
+        statusText = await cells.nth(2).innerText().catch(() => "");
+        detailText = await cells.nth(3).innerText().catch(() => "");
+      }
 
       // 🛑 万が一キャンセルになった場合の安全弁
-      if (rowText.includes('キャンセル')) {
+      if (statusText.includes('キャンセル') || detailText.includes('キャンセル')) {
         throw new Error(`管理画面側でリクエストが「キャンセル」されました。履歴を確認してください。`);
       }
 
       // 🎯 リクエスト日時のすぐ下の行（2行目）にダウンロードリンク（aタグ）が出現したかを検知
       const downloadLinkExists = await firstRow.locator('a[href*=".csv"], a:has-text("ダウンロード")').first().isVisible().catch(() => false);
       
-      if (downloadLinkExists && (rowText.includes('完了') || rowText.includes('成功'))) {
+      if (downloadLinkExists && (statusText.includes('完了') || statusText.includes('成功') || detailText.includes('rec_recruitments'))) {
         console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了とURLを検知しました！`);
         break;
       }
       
       if (loopCount % 6 === 0) {
-        console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: ${rowText.replace(/\s+/g, ' ')}`);
+        console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${statusText}] ${detailText}`);
       }
       loopCount++;
     }

@@ -188,7 +188,7 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
 }
 
 // =========================================================
-// 【新方式】修正版：DOM + iframe横断探索＆フォールバックアップロード方式
+// 【新方式】修正版：順番制御と進進監視シーケンス強化
 // =========================================================
 async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   // ① 募集一覧画面へ移動
@@ -216,7 +216,7 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   if (await mainInput.count() > 0) {
     targetInput = mainInput;
   } else {
-    // パターンB: HitoManagerでありがちな iframe 内の読込を確認
+    // パターンB: iframe 内の読込を確認
     console.log(`🔍 【${acc.name}】[${label}] メインDOMに見つからないため、iframe内をスキャンします...`);
     const frames = page.frames();
     for (const frame of frames) {
@@ -234,13 +234,11 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
     await targetInput.setInputFiles(fileToUpload);
     console.log(`✅ 【${acc.name}】[${label}] input要素へのファイル注入に成功しました。`);
   } else {
-    // パターンC: インプットがどうしても見つからない場合のクリックフォールバック
     console.log(`⚠️ 【${acc.name}】[${label}] inputが見つかりません。カスタムUIと判断し、直接クリックを試みます...`);
     const customUploadBtn = page.locator('text=ファイルを選択, text=ファイル選択, button:has-text("選択"), .file-upload, .upload-area').first();
     if (await customUploadBtn.count() > 0) {
       await customUploadBtn.click({ force: true }).catch(() => {});
     }
-    // ここで強引に一瞬出現するかもしれないinputに再度差し込んでみる（お守り）
     const retryInput = page.locator('input[type="file"]').first();
     if (await retryInput.count() > 0) {
       await retryInput.setInputFiles(fileToUpload).catch(() => {});
@@ -249,14 +247,12 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   
   await page.waitForTimeout(2000);
 
-  // ④ 青色の『ファイル取込予約』実行ボタンをクリック
+  // ④ 青色の『ファイル取込予約』実行ボタンをクリック（確定）
   console.log(`🚀 【${acc.name}】[${label}] 青色の『ファイル取込予約』実行ボタンをクリックします...`);
   
-  // メインDOM内、およびiframe内の両方で「確定ボタン」を探す
   let doUploadBtn = page.locator('.modal-footer button:has-text("ファイル取込予約"), #cboxLoadedContent button:has-text("ファイル取込予約"), div[class*="modal"] button:has-text("ファイル取込予約")').first();
   
   if (await doUploadBtn.count() === 0) {
-    // iframe内も含めて再検索
     const frames = page.frames();
     for (const frame of frames) {
       const frameBtn = frame.locator('button:has-text("ファイル取込予約"), input[type="submit"][value="ファイル取込予約"]').first();
@@ -273,20 +269,31 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
     await doUploadBtn.click({ force: true }).catch(() => {});
   }
   
-  console.log(`🚀 【${acc.name}】[${label}] 取込リクエスト送信完了。安全のため8秒待機します。`);
-  await page.waitForTimeout(8000);
+  // ★重要：処理の開始・反映を確実にするため待機
+  await page.waitForTimeout(5000);
+  await page.waitForLoadState('networkidle').catch(() => {});
 
   // ⑤ 上部メニューの矢印から『取込ファイル一覧』画面へ移動
-  console.log(`👉 【${acc.name}】[${label}] メニューの矢印から『取込ファイル一覧』へ移動します...`);
-  await navigateViaMenuOrUrl(page, acc, "取込ファイル一覧", "rec_import_histories");
+  console.log(`👉 【${acc.name}】[${label}] 矢印メニューから取込ファイル一覧へ移動します...`);
+  const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
+  if (await menuHoverIcon.count() > 0) {
+    await menuHoverIcon.hover();
+    await page.waitForTimeout(1500);
+  }
+
+  const importList = page.locator('a:has-text("取込ファイル一覧")').first();
+  await importList.waitFor({ state: 'visible', timeout: 30000 });
+  await importList.click({ force: true });
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(3000);
 
   // ⑥ ステータスが「完了」になるまでその場で監視ループ
-  console.log(`⏳ 【${acc.name}】[${label}] 取込完了（ステータス: 完了...）を監視中...`);
+  console.log(`⏳ 【${acc.name}】[${label}] 取込完了を監視中...`);
   let loopCount = 1;
   while (true) { 
     await page.waitForTimeout(10000); // 10秒チェック
 
-    const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
+    const refreshBtn = page.locator('text=最新を表示する, button:has-text("最新を表示する")').first();
     if (await refreshBtn.count() > 0) {
       await refreshBtn.click({ force: true }).catch(() => {});
       await page.waitForTimeout(2000);
@@ -308,14 +315,12 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
       }
     }
 
+    console.log(`⏳ 【${acc.name}】[${label}] 状態チェック中... 現在の状態: [${statusText.trim()}] [${detailText.trim()}]`);
+
     // 「完了」状態になったらループを抜け、次のファイルへ進む
     if (statusText.includes('完了') && (detailText.includes('成功') || detailText.includes('一部エラーあり'))) {
       console.log(`✅ 【${acc.name}】[${label}] 取込が正常に「${statusText.trim()}（${detailText.trim()}）」となりました。完了です！`);
       break;
-    } else {
-      if (loopCount % 3 === 0) {
-        console.log(`⏳ 【${acc.name}】[${label}] 処理の完了を待っています... 現在の状態: [${statusText.trim()}] [${detailText.trim()}]`);
-      }
     }
     loopCount++;
   }

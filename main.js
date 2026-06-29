@@ -66,6 +66,7 @@ function getTargetDates() {
   };
 }
 
+// ───【修正版】BOM付きUTF-8で保存する関数 ───
 function generatePatternFiles(headerLine, targetRows, basePath, accountName, label) {
   const idxA = colNameToIndex('A');
   const idxB = colNameToIndex('B');
@@ -88,8 +89,10 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
   });
 
   const path1 = basePath.replace('.csv', `_${label}_pattern1.csv`);
-  fs.writeFileSync(path1, [headerLine, ...pattern1Rows.map(toCSVLine)].join('\n'), 'utf8');
-  console.log(`✅ 【${accountName}】【${label}】パターン1 CSV保存完了: ${path1}`);
+  const content1 = [headerLine, ...pattern1Rows.map(toCSVLine)].join('\r\n');
+  // 先頭に \ufeff を足すことでExcelやシステムに日本語だと認識させます
+  fs.writeFileSync(path1, '\ufeff' + content1, 'utf8');
+  console.log(`✅ 【${accountName}】【${label}】パターン1 CSV保存完了(BOM付き): ${path1}`);
 
   const dates = getTargetDates();
   const pattern2BaseRows = targetRows.map(orgRow => {
@@ -112,12 +115,14 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
   }
 
   const path2 = basePath.replace('.csv', `_${label}_pattern2.csv`);
-  fs.writeFileSync(path2, [headerLine, ...pattern2BaseRows.map(toCSVLine)].join('\n'), 'utf8');
-  console.log(`✅ 【${accountName}】【${label}】パターン2 CSV保存完了: ${path2}`);
+  const content2 = [headerLine, ...pattern2BaseRows.map(toCSVLine)].join('\r\n');
+  fs.writeFileSync(path2, '\ufeff' + content2, 'utf8');
+  console.log(`✅ 【${accountName}】【${label}】パターン2 CSV保存完了(BOM付き): ${path2}`);
 
   return { path1, path2 };
 }
 
+// ───【修正版】BOMを自動処理して読み込む関数 ───
 function processCSVFile(filePath, accountName) {
   if (!fs.existsSync(filePath)) {
     console.log(`⚠️ 【${accountName}】ファイルが見つかりません: ${filePath}`);
@@ -125,7 +130,12 @@ function processCSVFile(filePath, accountName) {
   }
 
   console.log(`🛠️ 【${accountName}】CSVの加工処理を開始します...`);
-  const content = fs.readFileSync(filePath, 'utf8');
+  let content = fs.readFileSync(filePath, 'utf8');
+  
+  if (content.startsWith('\ufeff')) {
+    content = content.slice(1);
+  }
+  
   const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
   if (lines.length <= 1) return null;
 
@@ -187,9 +197,6 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
   await page.waitForTimeout(2000);
 }
 
-// =========================================================
-// 最新行（リクエスト日時の下の行）のポーリング監視関数
-// =========================================================
 async function waitImportLatestRow(page, acc, label, timeout = 20 * 60 * 1000) {
   const start = Date.now();
 
@@ -228,9 +235,6 @@ async function waitImportLatestRow(page, acc, label, timeout = 20 * 60 * 1000) {
   }
 }
 
-// =========================================================
-// 【新方式】修正版：順番制御と進捗監視シーケンス強化
-// =========================================================
 async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   console.log(`👉 【${acc.name}】[${label}] 画面状態をリセットし募集一覧画面へ移動します...`);
   const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
@@ -282,15 +286,11 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   
   await page.waitForTimeout(3000);
 
-  // -------------------------------------------------------
-  // 【超絶強化】青色の『ファイル取込予約』実行ボタンの完全捕捉
-  // -------------------------------------------------------
   console.log(`🚀 【${acc.name}】[${label}] 青色の『ファイル取込予約』実行ボタンを確定します...`);
   
   let targetClickBtn = null;
-  const targetContext = activeFrame || page; // iframeがあればiframeから、なければメインDOMから
+  const targetContext = activeFrame || page;
 
-  // タグ指定（button）を排除し、「文字が含まれる全ての要素」から幅広く探索するセレクターに変更
   const universalSelectors = [
     ':text("ファイル取込予約")',
     'a:has-text("ファイル取込予約")',
@@ -300,7 +300,7 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   ];
 
   for (const selector of universalSelectors) {
-    const el = targetContext.locator(selector).last(); // 画面上、下部にある確定ボタンを狙うためlast()
+    const el = targetContext.locator(selector).last();
     if (await el.count() > 0) {
       targetClickBtn = el;
       console.log(`🎯 セレクター合致によりボタンを捕捉: ${selector}`);
@@ -308,7 +308,6 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
     }
   }
 
-  // 万が一上記で見つからない場合、全フレームから文字だけで最終スキャン
   if (!targetClickBtn) {
     for (const f of page.frames()) {
       const el = f.locator(':text("ファイル取込予約")').last();
@@ -323,7 +322,6 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
     throw new Error("❌ 青い『ファイル取込予約』ボタンを画面上から特定できませんでした。");
   }
 
-  // 物理クリックを実行
   console.log(`👆 【${acc.name}】[${label}] 青いエリアを物理クリック（強制）します...`);
   await targetClickBtn.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
   await targetClickBtn.click({ force: true, timeout: 15000 });
@@ -331,7 +329,6 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   
   await page.waitForTimeout(5000);
 
-  // ⑤ 移動待機（条件を厳格化：URLが変わる、または完全に一覧に切り替わるまで待つ）
   console.log(`👉 【${acc.name}】[${label}] 自動遷移による『取込ファイル一覧』への到着を待機しています...`);
   try {
     await page.waitForFunction(() => {
@@ -345,7 +342,6 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   
   console.log(`📄 【${acc.name}】[${label}] 『取込ファイル一覧』画面への同期完了。`);
 
-  // 最新行のステータスを監視ループ
   await waitImportLatestRow(page, acc, label);
 }
 
@@ -360,9 +356,6 @@ async function runLoginAndProcess(browser, acc) {
   });
 
   try {
-    // -------------------------------------------------------
-    // 【前半：旧方式】ログイン ➔ 取出 ➔ 待記・ダウンロード ➔ 自動編集
-    // -------------------------------------------------------
     await page.goto(acc.url, { waitUntil: 'networkidle' }); 
     await page.locator('input[type="text"], input[type="email"], input[name*="login"]').first().fill(acc.id);
     await page.locator('input[type="password"]').first().fill(acc.password);
@@ -454,20 +447,9 @@ async function runLoginAndProcess(browser, acc) {
     const processed = processCSVFile(downloadPath, acc.name);
     if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 
-    // -------------------------------------------------------
-    // 【後半：新方式】完全に1点ずつ「取込 ➔ 完了」を待って、次のファイルへ進む
-    // -------------------------------------------------------
-    
-    // 【1枚目】 通常版：非掲載
     await uploadAndWatchSingleFile(page, acc, processed.normal.path1, '①通常版・非掲載');
-
-    // 【2枚目】 通常版：掲載
     await uploadAndWatchSingleFile(page, acc, processed.normal.path2, '②通常版・掲載');
-    
-    // 【3枚目】 PV版：非掲載
     await uploadAndWatchSingleFile(page, acc, processed.pv.path1, '③PV版・非掲載');
-
-    // 【4枚目】 PV版：掲載
     await uploadAndWatchSingleFile(page, acc, processed.pv.path2, '④PV版・掲載');
 
     console.log(`🎉 【${acc.name}】通常版・PV版を含む全 4 タスクの工程が正常終了しました。`);

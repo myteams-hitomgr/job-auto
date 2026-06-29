@@ -196,10 +196,8 @@ async function waitImportLatestRow(page, acc, label, timeout = 20 * 60 * 1000) {
   while (true) {
     const result = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll('tr'));
-      // リクエスト日時（時刻のコロン）が含まれるデータ行のみに絞り込む
       const dataRows = rows.filter(r => r.innerText.includes(':'));
       
-      // 一番下（最新行）を取得
       const latest = dataRows[dataRows.length - 1];
       if (!latest) return { status: 'not_found' };
 
@@ -223,9 +221,8 @@ async function waitImportLatestRow(page, acc, label, timeout = 20 * 60 * 1000) {
       throw new Error(`取込処理がタイムアウト（${timeout / 60000}分）しました。`);
     }
 
-    await page.waitForTimeout(10000); // 10秒待機
+    await page.waitForTimeout(10000);
 
-    // UIズレ対策（最新状態を反映させるためにページをリロード）
     console.log(`🔄 【${acc.name}】[${label}] ページをリロードして再確認します...`);
     await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
   }
@@ -235,32 +232,25 @@ async function waitImportLatestRow(page, acc, label, timeout = 20 * 60 * 1000) {
 // 【新方式】修正版：順番制御と進捗監視シーケンス強化
 // =========================================================
 async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
-  // ① 募集一覧画面へ移動
   console.log(`👉 【${acc.name}】[${label}] 募集一覧画面へ移動します...`);
   const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
   await page.goto(recruitUrl, { waitUntil: 'networkidle' }).catch(() => {});
   await page.waitForTimeout(2000);
 
-  // ② 『ファイル取込予約』ボタンをクリックしてモーダルを展開
   console.log(`👉 【${acc.name}】[${label}] 『ファイル取込予約』ボタンをクリックしてポップアップを開きます...`);
   const openModalBtn = page.locator('a:has-text("ファイル取込予約")').first();
   await openModalBtn.waitFor({ state: 'visible', timeout: 10000 });
   await openModalBtn.click({ force: true });
   
-  // モーダル展開および要素配置の安定化を待機
   await page.waitForTimeout(4000);
 
-  // ③ input[type="file"] をメインDOM、および全 iframe から自動探索してセット
   console.log(`📤 【${acc.name}】[${label}] アップロード要素を探索中...`);
-  
   let targetInput = null;
 
-  // パターンA: メインDOM内を確認
   const mainInput = page.locator('input[type="file"]').first();
   if (await mainInput.count() > 0) {
     targetInput = mainInput;
   } else {
-    // パターンB: iframe 内の読込を確認
     console.log(`🔍 【${acc.name}】[${label}] メインDOMに見つからないため、iframe内をスキャンします...`);
     const frames = page.frames();
     for (const frame of frames) {
@@ -273,7 +263,6 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
     }
   }
 
-  // 決定したインプットに対して流し込みを実行
   if (targetInput) {
     await targetInput.setInputFiles(fileToUpload);
     console.log(`✅ 【${acc.name}】[${label}] input要素へのファイル注入に成功しました。`);
@@ -289,41 +278,82 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
     }
   }
   
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(3000);
 
-  // ④ 青色の『ファイル取込予約』実行ボタンをクリック（確定）
-  console.log(`🚀 【${acc.name}】[${label}] 青色の『ファイル取込予約』実行ボタンをクリックします...`);
+  // -------------------------------------------------------
+  // 【強化】青色の『ファイル取込予約』実行ボタンのクリック制御
+  // -------------------------------------------------------
+  console.log(`🚀 【${acc.name}】[${label}] 青色の『ファイル取込予約』実行ボタンを探索・確定します...`);
   
-  let doUploadBtn = page.locator('.modal-footer button:has-text("ファイル取込予約"), #cboxLoadedContent button:has-text("ファイル取込予約"), div[class*="modal"] button:has-text("ファイル取込予約")').first();
-  
-  if (await doUploadBtn.count() === 0) {
+  // 安全のため直前の状態を念のためデバッグ用に保存（万が一の証拠用）
+  await page.screenshot({ path: `before_click_${acc.name}_${label}.png`, fullPage: true }).catch(() => {});
+
+  let targetClickBtn = null;
+
+  // 判定1: メインDOM上にある有力なターゲットを精査
+  const potentialSelectors = [
+    '.modal-footer button:has-text("ファイル取込予約")',
+    '#cboxLoadedContent button:has-text("ファイル取込予約")',
+    'div[class*="modal"] button:has-text("ファイル取込予約")',
+    'button:has-text("ファイル取込予約")'
+  ];
+
+  for (const selector of potentialSelectors) {
+    const btn = page.locator(selector).first();
+    if (await btn.count() > 0 && await btn.isVisible()) {
+      targetClickBtn = btn;
+      console.log(`🎯 【${acc.name}】[${label}] メインDOM内でターゲットボタンを補足しました (${selector})`);
+      break;
+    }
+  }
+
+  // 判定2: メインDOMで見つからない、または不可視なら全iframeから死に物狂いで探す
+  if (!targetClickBtn) {
+    console.log(`🔍 【${acc.name}】[${label}] メインDOM内に有効なボタンがないため、全iframe内部を徹底探索します...`);
     const frames = page.frames();
     for (const frame of frames) {
       const frameBtn = frame.locator('button:has-text("ファイル取込予約"), input[type="submit"][value="ファイル取込予約"]').first();
       if (await frameBtn.count() > 0) {
-        doUploadBtn = frameBtn;
+        targetClickBtn = frameBtn;
+        console.log(`💡 【${acc.name}】[${label}] iframe内に埋もれていた『ファイル取込予約』実行ボタンを検出しました。`);
         break;
       }
     }
   }
 
-  if (await doUploadBtn.count() === 0) {
-    await page.locator('button:has-text("ファイル取込予約")').last().click({ force: true }).catch(() => {});
-  } else {
-    await doUploadBtn.click({ force: true }).catch(() => {});
+  // 判定3: 最終バックアップ
+  if (!targetClickBtn) {
+    console.log(`⚠️ 【${acc.name}】[${label}] 精密条件で見つからないため、強制的に汎用ロケーターを割り当てます。`);
+    targetClickBtn = page.locator('button:has-text("ファイル取込予約")').last();
+  }
+
+  // 実行：スクロールを強制させ、オーバーレイ要素を完全に無視して押し切る（スタック防止）
+  try {
+    await targetClickBtn.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+    await targetClickBtn.click({ force: true, timeout: 10000 });
+    console.log(`✅ 【${acc.name}】[${label}] 青色の『ファイル取込予約』実行ボタンのクリックに成功しました。`);
+  } catch (clickErr) {
+    console.log(`⚠️ 【${acc.name}】[${label}] 通常クリックメソッドがブロックされたため、Page.evaluateから直接JS発火を試みます...`);
+    await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+      const target = buttons.find(b => b.textContent.includes('ファイル取込予約') || (b.value && b.value.includes('ファイル取込予約')));
+      if (target) {
+        target.scrollIntoView();
+        target.click();
+      }
+    }).catch(() => {});
   }
   
-  // 青ボタン押下後は自動遷移されるため、無理に「画面遷移待ち」をせず軽く待つ
+  // 青ボタン押下後は一覧画面への自動リダイレクトを待つ
   await page.waitForTimeout(3000);
 
-  // ⑤ 「取込ファイル一覧」に自動遷移したことを確認
-  console.log(`👉 【${acc.name}】[${label}] 自動遷移による『取込ファイル一覧』への到着を待機しています...`);
+  console.log(`👉 【${acc.name}】[${label}] 自動遷移による『取込ファイル一覧』への到着を待記しています...`);
   await page.waitForFunction(() => {
     return document.body.innerText.includes('取込ファイル一覧');
   }, { timeout: 60000 });
   console.log(`📄 【${acc.name}】[${label}] 『取込ファイル一覧』画面への自動遷移を確認しました。`);
 
-  // ⑥ 最新行（リクエスト日時の下の行）のステータスが完了になるまで監視ループを実行
+  // 最新行のステータスを監視ループ
   await waitImportLatestRow(page, acc, label);
 }
 

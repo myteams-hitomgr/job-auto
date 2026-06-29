@@ -1,40 +1,34 @@
-name: job-auto
+name: Job Automation Run
 
 on:
-  schedule:
-    - cron: '0 */3 * * *' # 元の設定を維持（3時間おき）
+  # 手動で実行したい場合、または定期実行（必要に応じて設定してください）
   workflow_dispatch:
 
 jobs:
-  run:
+  run-bot:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
-      - name: Install Playwright
-        run: npm install playwright
+      - name: Install Playwright Browsers
+        run: |
+          npm install -g playwright
+          npx playwright install --with-deps chromium
 
-      - name: Install browsers
-        run: npx playwright install chromium --with-deps
+      - name: Install 文字化け対策部品
+        run: npm install iconv-lite
 
-      - name: Run script
+      - name: Run Automation Script
         env:
-          # 💡 ここを追加することで、プログラムにIDとパスワードが正しく渡るようになります！
           HITOMGR_ID_M003: ${{ secrets.HITOMGR_ID_M003 }}
-          HITOMGR_ID_U003: ${{ secrets.HITOMGR_ID_U003 }}
           HITOMGR_PASSWORD_PASSU003: ${{ secrets.HITOMGR_PASSWORD_PASSU003 }}
+          HITOMGR_ID_U003: ${{ secrets.HITOMGR_ID_U003 }}
         run: node main.js
-
-      - name: Upload screenshots
-        if: always() # 途中でエラーが起きても必ずスクショを保存する設定
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots
-          path: "*.png"

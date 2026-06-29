@@ -188,7 +188,7 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
 }
 
 // =========================================================
-// 【新方式】修正版：input[type="file"]へのダイレクト注入方式
+// 【新方式】修正版：DOM + iframe横断探索＆フォールバックアップロード方式
 // =========================================================
 async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   // ① 募集一覧画面へ移動
@@ -203,26 +203,74 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   await openModalBtn.waitFor({ state: 'visible', timeout: 10000 });
   await openModalBtn.click({ force: true });
   
-  // モーダル展開およびinput要素配置の安定化を待機
-  await page.waitForTimeout(3000);
+  // モーダル展開および要素配置の安定化を待機
+  await page.waitForTimeout(4000);
 
-  // ③ 隠れている input[type="file"] を捕捉してファイルを直接セットする
-  console.log(`📤 【${acc.name}】[${label}] ファイル（${path.basename(fileToUpload)}）を直接セット中...`);
-  const fileInput = page.locator('input[type="file"]').first();
-  await fileInput.waitFor({ state: 'attached', timeout: 10000 }); // DOM上に存在すればhiddenでもOK
-  await fileInput.setInputFiles(fileToUpload);
+  // ③ input[type="file"] をメインDOM、および全 iframe から自動探索してセット
+  console.log(`📤 【${acc.name}】[${label}] アップロード要素を探索中...`);
+  
+  let targetInput = null;
+
+  // パターンA: メインDOM内を確認
+  const mainInput = page.locator('input[type="file"]').first();
+  if (await mainInput.count() > 0) {
+    targetInput = mainInput;
+  } else {
+    // パターンB: HitoManagerでありがちな iframe 内の読込を確認
+    console.log(`🔍 【${acc.name}】[${label}] メインDOMに見つからないため、iframe内をスキャンします...`);
+    const frames = page.frames();
+    for (const frame of frames) {
+      const frameInput = frame.locator('input[type="file"]').first();
+      if (await frameInput.count() > 0) {
+        targetInput = frameInput;
+        console.log(`💡 【${acc.name}】[${label}] iframe内で input[type="file"] を検出しました。`);
+        break;
+      }
+    }
+  }
+
+  // 決定したインプットに対して流し込みを実行
+  if (targetInput) {
+    await targetInput.setInputFiles(fileToUpload);
+    console.log(`✅ 【${acc.name}】[${label}] input要素へのファイル注入に成功しました。`);
+  } else {
+    // パターンC: インプットがどうしても見つからない場合のクリックフォールバック
+    console.log(`⚠️ 【${acc.name}】[${label}] inputが見つかりません。カスタムUIと判断し、直接クリックを試みます...`);
+    const customUploadBtn = page.locator('text=ファイルを選択, text=ファイル選択, button:has-text("選択"), .file-upload, .upload-area').first();
+    if (await customUploadBtn.count() > 0) {
+      await customUploadBtn.click({ force: true }).catch(() => {});
+    }
+    // ここで強引に一瞬出現するかもしれないinputに再度差し込んでみる（お守り）
+    const retryInput = page.locator('input[type="file"]').first();
+    if (await retryInput.count() > 0) {
+      await retryInput.setInputFiles(fileToUpload).catch(() => {});
+    }
+  }
+  
   await page.waitForTimeout(2000);
 
   // ④ 青色の『ファイル取込予約』実行ボタンをクリック
   console.log(`🚀 【${acc.name}】[${label}] 青色の『ファイル取込予約』実行ボタンをクリックします...`);
   
-  // モーダル（ポップアップ）内のフッターや特定のコンテナにある確定ボタンを優先的にターゲット
-  const doUploadBtn = page.locator('.modal-footer button:has-text("ファイル取込予約"), #cboxLoadedContent button:has-text("ファイル取込予約"), div[class*="modal"] button:has-text("ファイル取込予約")').first();
+  // メインDOM内、およびiframe内の両方で「確定ボタン」を探す
+  let doUploadBtn = page.locator('.modal-footer button:has-text("ファイル取込予約"), #cboxLoadedContent button:has-text("ファイル取込予約"), div[class*="modal"] button:has-text("ファイル取込予約")').first();
   
   if (await doUploadBtn.count() === 0) {
-    await page.locator('button:has-text("ファイル取込予約")').last().click({ force: true });
+    // iframe内も含めて再検索
+    const frames = page.frames();
+    for (const frame of frames) {
+      const frameBtn = frame.locator('button:has-text("ファイル取込予約"), input[type="submit"][value="ファイル取込予約"]').first();
+      if (await frameBtn.count() > 0) {
+        doUploadBtn = frameBtn;
+        break;
+      }
+    }
+  }
+
+  if (await doUploadBtn.count() === 0) {
+    await page.locator('button:has-text("ファイル取込予約")').last().click({ force: true }).catch(() => {});
   } else {
-    await doUploadBtn.click({ force: true });
+    await doUploadBtn.click({ force: true }).catch(() => {});
   }
   
   console.log(`🚀 【${acc.name}】[${label}] 取込リクエスト送信完了。安全のため8秒待機します。`);

@@ -188,7 +188,51 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
 }
 
 // =========================================================
-// 【新方式】修正版：順番制御と進進監視シーケンス強化
+// 最新行（リクエスト日時の下の行）のポーリング監視関数
+// =========================================================
+async function waitImportLatestRow(page, acc, label, timeout = 20 * 60 * 1000) {
+  const start = Date.now();
+
+  while (true) {
+    const result = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('tr'));
+      // リクエスト日時（時刻のコロン）が含まれるデータ行のみに絞り込む
+      const dataRows = rows.filter(r => r.innerText.includes(':'));
+      
+      // 一番下（最新行）を取得
+      const latest = dataRows[dataRows.length - 1];
+      if (!latest) return { status: 'not_found' };
+
+      const text = latest.innerText;
+
+      if (text.includes('完了') || text.includes('一部エラー') || text.includes('エラー')) {
+        return { status: 'done', text };
+      }
+
+      return { status: 'processing', text };
+    });
+
+    console.log(`🔍 【${acc.name}】[${label}] 状態チェック中... 現在の最新行状態: [${result.status}]`);
+
+    if (result.status === 'done') {
+      console.log(`✅ 【${acc.name}】[${label}] 最新行の取込完了を確認: ${result.text.trim().replace(/\s+/g, ' ')}`);
+      return true;
+    }
+
+    if (Date.now() - start > timeout) {
+      throw new Error(`取込処理がタイムアウト（${timeout / 60000}分）しました。`);
+    }
+
+    await page.waitForTimeout(10000); // 10秒待機
+
+    // UIズレ対策（最新状態を反映させるためにページをリロード）
+    console.log(`🔄 【${acc.name}】[${label}] ページをリロードして再確認します...`);
+    await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+  }
+}
+
+// =========================================================
+// 【新方式】修正版：順番制御と進捗監視シーケンス強化
 // =========================================================
 async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   // ① 募集一覧画面へ移動
@@ -269,61 +313,18 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
     await doUploadBtn.click({ force: true }).catch(() => {});
   }
   
-  // ★重要：処理の開始・反映を確実にするため待機
-  await page.waitForTimeout(5000);
-  await page.waitForLoadState('networkidle').catch(() => {});
-
-  // ⑤ 上部メニューの矢印から『取込ファイル一覧』画面へ移動
-  console.log(`👉 【${acc.name}】[${label}] 矢印メニューから取込ファイル一覧へ移動します...`);
-  const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
-  if (await menuHoverIcon.count() > 0) {
-    await menuHoverIcon.hover();
-    await page.waitForTimeout(1500);
-  }
-
-  const importList = page.locator('a:has-text("取込ファイル一覧")').first();
-  await importList.waitFor({ state: 'visible', timeout: 30000 });
-  await importList.click({ force: true });
-  await page.waitForLoadState('networkidle').catch(() => {});
+  // 青ボタン押下後は自動遷移されるため、無理に「画面遷移待ち」をせず軽く待つ
   await page.waitForTimeout(3000);
 
-  // ⑥ ステータスが「完了」になるまでその場で監視ループ
-  console.log(`⏳ 【${acc.name}】[${label}] 取込完了を監視中...`);
-  let loopCount = 1;
-  while (true) { 
-    await page.waitForTimeout(10000); // 10秒チェック
+  // ⑤ 「取込ファイル一覧」に自動遷移したことを確認
+  console.log(`👉 【${acc.name}】[${label}] 自動遷移による『取込ファイル一覧』への到着を待機しています...`);
+  await page.waitForFunction(() => {
+    return document.body.innerText.includes('取込ファイル一覧');
+  }, { timeout: 60000 });
+  console.log(`📄 【${acc.name}】[${label}] 『取込ファイル一覧』画面への自動遷移を確認しました。`);
 
-    const refreshBtn = page.locator('text=最新を表示する, button:has-text("最新を表示する")').first();
-    if (await refreshBtn.count() > 0) {
-      await refreshBtn.click({ force: true }).catch(() => {});
-      await page.waitForTimeout(2000);
-    }
-
-    const rows = await page.locator('table tr').all();
-    let statusText = "";
-    let detailText = "";
-
-    for (const row of rows) {
-      const cells = await row.locator('td').all();
-      if (cells.length >= 5) {
-        const dateCell = await cells[0].evaluate(el => el.textContent || "");
-        if (dateCell.includes('2026') || dateCell.includes('/') || dateCell.includes(':')) {
-          statusText = await cells[4].evaluate(el => el.textContent || ""); // ステータス列
-          detailText = await cells[5].evaluate(el => el.textContent || ""); // 詳細列
-          break;
-        }
-      }
-    }
-
-    console.log(`⏳ 【${acc.name}】[${label}] 状態チェック中... 現在の状態: [${statusText.trim()}] [${detailText.trim()}]`);
-
-    // 「完了」状態になったらループを抜け、次のファイルへ進む
-    if (statusText.includes('完了') && (detailText.includes('成功') || detailText.includes('一部エラーあり'))) {
-      console.log(`✅ 【${acc.name}】[${label}] 取込が正常に「${statusText.trim()}（${detailText.trim()}）」となりました。完了です！`);
-      break;
-    }
-    loopCount++;
-  }
+  // ⑥ 最新行（リクエスト日時の下の行）のステータスが完了になるまで監視ループを実行
+  await waitImportLatestRow(page, acc, label);
 }
 
 async function runLoginAndProcess(browser, acc) {

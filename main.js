@@ -232,10 +232,10 @@ async function waitImportLatestRow(page, acc, label, timeout = 20 * 60 * 1000) {
 // 【新方式】修正版：順番制御と進捗監視シーケンス強化
 // =========================================================
 async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
-  console.log(`👉 【${acc.name}】[${label}] 募集一覧画面へ移動します...`);
+  console.log(`👉 【${acc.name}】[${label}] 画面状態をリセットし募集一覧画面へ移動します...`);
   const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
   await page.goto(recruitUrl, { waitUntil: 'networkidle' }).catch(() => {});
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(3000);
 
   console.log(`👉 【${acc.name}】[${label}] 『ファイル取込予約』ボタンをクリックしてポップアップを開きます...`);
   const openModalBtn = page.locator('a:has-text("ファイル取込予約")').first();
@@ -246,6 +246,7 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
 
   console.log(`📤 【${acc.name}】[${label}] アップロード要素を探索中...`);
   let targetInput = null;
+  let activeFrame = null; 
 
   const mainInput = page.locator('input[type="file"]').first();
   if (await mainInput.count() > 0) {
@@ -257,6 +258,7 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
       const frameInput = frame.locator('input[type="file"]').first();
       if (await frameInput.count() > 0) {
         targetInput = frameInput;
+        activeFrame = frame; 
         console.log(`💡 【${acc.name}】[${label}] iframe内で input[type="file"] を検出しました。`);
         break;
       }
@@ -267,7 +269,7 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
     await targetInput.setInputFiles(fileToUpload);
     console.log(`✅ 【${acc.name}】[${label}] input要素へのファイル注入に成功しました。`);
   } else {
-    console.log(`⚠️ 【${acc.name}】[${label}] inputが見つかりません。カスタムUIと判断し、直接クリックを試みます...`);
+    console.log(`⚠️ 【${acc.name}】[${label}] inputが見つかりません。直接クリックを試みます...`);
     const customUploadBtn = page.locator('text=ファイルを選択, text=ファイル選択, button:has-text("選択"), .file-upload, .upload-area').first();
     if (await customUploadBtn.count() > 0) {
       await customUploadBtn.click({ force: true }).catch(() => {});
@@ -281,77 +283,67 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   await page.waitForTimeout(3000);
 
   // -------------------------------------------------------
-  // 【強化】青色の『ファイル取込予約』実行ボタンのクリック制御
+  // 【超絶強化】青色の『ファイル取込予約』実行ボタンの完全捕捉
   // -------------------------------------------------------
-  console.log(`🚀 【${acc.name}】[${label}] 青色の『ファイル取込予約』実行ボタンを探索・確定します...`);
+  console.log(`🚀 【${acc.name}】[${label}] 青色の『ファイル取込予約』実行ボタンを確定します...`);
   
-  // 安全のため直前の状態を念のためデバッグ用に保存（万が一の証拠用）
-  await page.screenshot({ path: `before_click_${acc.name}_${label}.png`, fullPage: true }).catch(() => {});
-
   let targetClickBtn = null;
+  const targetContext = activeFrame || page; // iframeがあればiframeから、なければメインDOMから
 
-  // 判定1: メインDOM上にある有力なターゲットを精査
-  const potentialSelectors = [
-    '.modal-footer button:has-text("ファイル取込予約")',
-    '#cboxLoadedContent button:has-text("ファイル取込予約")',
-    'div[class*="modal"] button:has-text("ファイル取込予約")',
+  // タグ指定（button）を排除し、「文字が含まれる全ての要素」から幅広く探索するセレクターに変更
+  const universalSelectors = [
+    ':text("ファイル取込予約")',
+    'a:has-text("ファイル取込予約")',
+    '[class*="btn"]:has-text("ファイル取込予約")',
+    'div:has-text("ファイル取込予約")',
     'button:has-text("ファイル取込予約")'
   ];
 
-  for (const selector of potentialSelectors) {
-    const btn = page.locator(selector).first();
-    if (await btn.count() > 0 && await btn.isVisible()) {
-      targetClickBtn = btn;
-      console.log(`🎯 【${acc.name}】[${label}] メインDOM内でターゲットボタンを補足しました (${selector})`);
+  for (const selector of universalSelectors) {
+    const el = targetContext.locator(selector).last(); // 画面上、下部にある確定ボタンを狙うためlast()
+    if (await el.count() > 0) {
+      targetClickBtn = el;
+      console.log(`🎯 セレクター合致によりボタンを捕捉: ${selector}`);
       break;
     }
   }
 
-  // 判定2: メインDOMで見つからない、または不可視なら全iframeから死に物狂いで探す
+  // 万が一上記で見つからない場合、全フレームから文字だけで最終スキャン
   if (!targetClickBtn) {
-    console.log(`🔍 【${acc.name}】[${label}] メインDOM内に有効なボタンがないため、全iframe内部を徹底探索します...`);
-    const frames = page.frames();
-    for (const frame of frames) {
-      const frameBtn = frame.locator('button:has-text("ファイル取込予約"), input[type="submit"][value="ファイル取込予約"]').first();
-      if (await frameBtn.count() > 0) {
-        targetClickBtn = frameBtn;
-        console.log(`💡 【${acc.name}】[${label}] iframe内に埋もれていた『ファイル取込予約』実行ボタンを検出しました。`);
+    for (const f of page.frames()) {
+      const el = f.locator(':text("ファイル取込予約")').last();
+      if (await el.count() > 0) {
+        targetClickBtn = el;
         break;
       }
     }
   }
 
-  // 判定3: 最終バックアップ
   if (!targetClickBtn) {
-    console.log(`⚠️ 【${acc.name}】[${label}] 精密条件で見つからないため、強制的に汎用ロケーターを割り当てます。`);
-    targetClickBtn = page.locator('button:has-text("ファイル取込予約")').last();
+    throw new Error("❌ 青い『ファイル取込予約』ボタンを画面上から特定できませんでした。");
   }
 
-  // 実行：スクロールを強制させ、オーバーレイ要素を完全に無視して押し切る（スタック防止）
+  // 物理クリックを実行
+  console.log(`👆 【${acc.name}】[${label}] 青いエリアを物理クリック（強制）します...`);
+  await targetClickBtn.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+  await targetClickBtn.click({ force: true, timeout: 15000 });
+  console.log(`🚀 【${acc.name}】[${label}] クリックイベントの送信完了。`);
+  
+  await page.waitForTimeout(5000);
+
+  // ⑤ 移動待機（条件を厳格化：URLが変わる、または完全に一覧に切り替わるまで待つ）
+  console.log(`👉 【${acc.name}】[${label}] 自動遷移による『取込ファイル一覧』への到着を待機しています...`);
   try {
-    await targetClickBtn.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
-    await targetClickBtn.click({ force: true, timeout: 10000 });
-    console.log(`✅ 【${acc.name}】[${label}] 青色の『ファイル取込予約』実行ボタンのクリックに成功しました。`);
-  } catch (clickErr) {
-    console.log(`⚠️ 【${acc.name}】[${label}] 通常クリックメソッドがブロックされたため、Page.evaluateから直接JS発火を試みます...`);
-    await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
-      const target = buttons.find(b => b.textContent.includes('ファイル取込予約') || (b.value && b.value.includes('ファイル取込予約')));
-      if (target) {
-        target.scrollIntoView();
-        target.click();
-      }
-    }).catch(() => {});
+    await page.waitForFunction(() => {
+      return document.body.innerText.includes('取込ファイル一覧') && !window.location.href.includes('rec_recruitments');
+    }, { timeout: 30000 });
+  } catch (moveErr) {
+    console.log(`⚠️ 自動遷移が確認できないため、直URLで取込ファイル一覧へ強制移動をかけます。`);
+    const historyUrl = acc.url.replace('/login/', '/rec_import_histories');
+    await page.goto(historyUrl, { waitUntil: 'networkidle' }).catch(() => {});
   }
   
-  // 青ボタン押下後は一覧画面への自動リダイレクトを待つ
-  await page.waitForTimeout(3000);
-
-  console.log(`👉 【${acc.name}】[${label}] 自動遷移による『取込ファイル一覧』への到着を待記しています...`);
-  await page.waitForFunction(() => {
-    return document.body.innerText.includes('取込ファイル一覧');
-  }, { timeout: 60000 });
-  console.log(`📄 【${acc.name}】[${label}] 『取込ファイル一覧』画面への自動遷移を確認しました。`);
+  console.log(`📄 【${acc.name}】[${label}] 『取込ファイル一覧』画面への同期完了。`);
 
   // 最新行のステータスを監視ループ
   await waitImportLatestRow(page, acc, label);

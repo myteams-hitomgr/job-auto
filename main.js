@@ -188,7 +188,7 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
 }
 
 // =========================================================
-// 【新方式】修正版：filechooserイベントを利用してアップロード
+// 【新方式】修正版：input[type="file"]へのダイレクト注入方式
 // =========================================================
 async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   // ① 募集一覧画面へ移動
@@ -197,29 +197,28 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   await page.goto(recruitUrl, { waitUntil: 'networkidle' }).catch(() => {});
   await page.waitForTimeout(2000);
 
-  // ② 『ファイル取込予約』ボタンをクリックして、ファイル選択ダイアログの起動を捕捉する
-  console.log(`👉 【${acc.name}】[${label}] 『ファイル取込予約』ボタンをクリックしてファイルを選択します...`);
+  // ② 『ファイル取込予約』ボタンをクリックしてモーダルを展開
+  console.log(`👉 【${acc.name}】[${label}] 『ファイル取込予約』ボタンをクリックしてポップアップを開きます...`);
   const openModalBtn = page.locator('a:has-text("ファイル取込予約")').first();
   await openModalBtn.waitFor({ state: 'visible', timeout: 10000 });
+  await openModalBtn.click({ force: true });
+  
+  // モーダル展開およびinput要素配置の安定化を待機
+  await page.waitForTimeout(3000);
 
-  // 既存の input[type="file"] を待つのではなく、クリックによって開くダイアログ(filechooser)をイベントで待機
-  const [fileChooser] = await Promise.all([
-    page.waitForEvent('filechooser', { timeout: 20000 }),
-    openModalBtn.click({ force: true })
-  ]);
-
-  // ③ ファイルをセット
-  console.log(`📤 【${acc.name}】[${label}] ファイル（${path.basename(fileToUpload)}）をインプットに流し込み中...`);
-  await fileChooser.setFiles(fileToUpload);
-  await page.waitForTimeout(3000); // ポップアップと実行ボタンが安定するのを少し待つ
+  // ③ 隠れている input[type="file"] を捕捉してファイルを直接セットする
+  console.log(`📤 【${acc.name}】[${label}] ファイル（${path.basename(fileToUpload)}）を直接セット中...`);
+  const fileInput = page.locator('input[type="file"]').first();
+  await fileInput.waitFor({ state: 'attached', timeout: 10000 }); // DOM上に存在すればhiddenでもOK
+  await fileInput.setInputFiles(fileToUpload);
+  await page.waitForTimeout(2000);
 
   // ④ 青色の『ファイル取込予約』実行ボタンをクリック
   console.log(`🚀 【${acc.name}】[${label}] 青色の『ファイル取込予約』実行ボタンをクリックします...`);
   
-  // モーダル（ポップアップ）内のフッターや特定のコンテナにあるボタンを優先的に狙う
+  // モーダル（ポップアップ）内のフッターや特定のコンテナにある確定ボタンを優先的にターゲット
   const doUploadBtn = page.locator('.modal-footer button:has-text("ファイル取込予約"), #cboxLoadedContent button:has-text("ファイル取込予約"), div[class*="modal"] button:has-text("ファイル取込予約")').first();
   
-  // もし上記ターゲットで見つからない場合は、画面上の「ファイル取込予約」テキストを持つ最後のボタン（通常はポップアップ側）を押す
   if (await doUploadBtn.count() === 0) {
     await page.locator('button:has-text("ファイル取込予約")').last().click({ force: true });
   } else {

@@ -1,6 +1,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const iconv = require('iconv-lite'); // 👈 文字化けを完全に直すための部品を使います
 
 const accounts = [
   { 
@@ -66,7 +67,7 @@ function getTargetDates() {
   };
 }
 
-// ───【修正版】BOM付きUTF-8で保存する関数 ───
+// ───【Shift_JISでCSVを正しく保存する修正】───
 function generatePatternFiles(headerLine, targetRows, basePath, accountName, label) {
   const idxA = colNameToIndex('A');
   const idxB = colNameToIndex('B');
@@ -90,9 +91,9 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
 
   const path1 = basePath.replace('.csv', `_${label}_pattern1.csv`);
   const content1 = [headerLine, ...pattern1Rows.map(toCSVLine)].join('\r\n');
-  // 先頭に \ufeff を足すことでExcelやシステムに日本語だと認識させます
-  fs.writeFileSync(path1, '\ufeff' + content1, 'utf8');
-  console.log(`✅ 【${accountName}】【${label}】パターン1 CSV保存完了(BOM付き): ${path1}`);
+  // 💡 ここで文字化けしないShift_JISに変換して保存します
+  fs.writeFileSync(path1, iconv.encode(content1, 'Shift_JIS'));
+  console.log(`✅ 【${accountName}】【${label}】パターン1 CSV保存完了(Shift_JIS): ${path1}`);
 
   const dates = getTargetDates();
   const pattern2BaseRows = targetRows.map(orgRow => {
@@ -116,13 +117,13 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
 
   const path2 = basePath.replace('.csv', `_${label}_pattern2.csv`);
   const content2 = [headerLine, ...pattern2BaseRows.map(toCSVLine)].join('\r\n');
-  fs.writeFileSync(path2, '\ufeff' + content2, 'utf8');
-  console.log(`✅ 【${accountName}】【${label}】パターン2 CSV保存完了(BOM付き): ${path2}`);
+  fs.writeFileSync(path2, iconv.encode(content2, 'Shift_JIS'));
+  console.log(`✅ 【${accountName}】【${label}】パターン2 CSV保存完了(Shift_JIS): ${path2}`);
 
   return { path1, path2 };
 }
 
-// ───【修正版】BOMを自動処理して読み込む関数 ───
+// ───【Shift_JISの元ファイルを正しく読み込む修正】───
 function processCSVFile(filePath, accountName) {
   if (!fs.existsSync(filePath)) {
     console.log(`⚠️ 【${accountName}】ファイルが見つかりません: ${filePath}`);
@@ -130,11 +131,10 @@ function processCSVFile(filePath, accountName) {
   }
 
   console.log(`🛠️ 【${accountName}】CSVの加工処理を開始します...`);
-  let content = fs.readFileSync(filePath, 'utf8');
   
-  if (content.startsWith('\ufeff')) {
-    content = content.slice(1);
-  }
+  // 💡 ダウンロードした元ファイルをShift_JISとして完璧にデコードして読み込みます
+  const buffer = fs.readFileSync(filePath);
+  const content = iconv.decode(buffer, 'Shift_JIS');
   
   const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
   if (lines.length <= 1) return null;
@@ -190,7 +190,6 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
       }
     }
   } catch (err) {
-    // ホバー失敗時は安全策として直URL遷移
   }
   const destinationUrl = acc.url.replace('/login/', `/${targetUrlSegment}`);
   await page.goto(destinationUrl, { waitUntil: 'networkidle' }).catch(() => {});

@@ -26,7 +26,60 @@ function colNameToIndex(colName) {
   return index - 1;
 }
 
-function parseCSVLine(line) {
+// ───【超強力・改行対応CSVパーサー】───
+// セル内の改行を無視し、本当のCSVの行に復元してパースします
+function parseCSVContentRobust(content, requiredMaxIndex) {
+  const rows = [];
+  let currentRawLine = '';
+  let inQuotes = false;
+  let isHeader = true;
+  let headerLine = '';
+  
+  // 処理速度向上のため、文字配列としてループ（メモリと速度の最適化）
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+    currentRawLine += char;
+    
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    }
+    
+    // クォーテーションの外側にある改行コード（\n または \r）だけを「本当の行末」とみなす
+    if (!inQuotes && (char === '\n' || char === '\r')) {
+      // \r\n の連続対応（次の文字が \n ならスキップ）
+      if (char === '\r' && content[i + 1] === '\n') {
+        currentRawLine += content[i + 1];
+        i++;
+      }
+      
+      const trimmedLine = currentRawLine.trim();
+      if (trimmedLine) {
+        if (isHeader) {
+          headerLine = trimmedLine;
+          isHeader = false;
+        } else {
+          // 行のパースを実行
+          const parsed = parseSingleCSVLine(trimmedLine);
+          if (parsed.length > requiredMaxIndex) {
+            rows.push(parsed);
+          }
+        }
+      }
+      currentRawLine = ''; // バッファをリセット
+    }
+  }
+  
+  // 最終行の残りカス処理
+  if (currentRawLine.trim() && !isHeader) {
+    const parsed = parseSingleCSVLine(currentRawLine.trim());
+    if (parsed.length > requiredMaxIndex) rows.push(parsed);
+  }
+  
+  return { headerLine, rows };
+}
+
+// 1行をカンマ分割する補助関数
+function parseSingleCSVLine(line) {
   const result = [];
   let current = '';
   let inQuotes = false;
@@ -67,7 +120,6 @@ function getTargetDates() {
   };
 }
 
-// ───【進捗ログ用フォーマッタ】───
 function formatProgress(current, total, startTime) {
   const elapsed = (Date.now() - startTime) / 1000;
   const percent = ((current / total) * 100).toFixed(1);
@@ -83,7 +135,6 @@ function formatProgress(current, total, startTime) {
   return `${current}/${total}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
 }
 
-// ───【Shift_JISでCSVを正しく保存する修正＋詳細ログ】───
 function generatePatternFiles(headerLine, targetRows, basePath, accountName, label) {
   const idxA = colNameToIndex('A');
   const idxB = colNameToIndex('B');
@@ -113,8 +164,7 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
     row[idxD] = '非掲載';
     pattern1Rows.push(row);
 
-    // 5000件ごと、または最後に進捗を出力
-    if ((i + 1) % 5000 === 0 || i === targetRows.length - 1) {
+    if ((i + 1) % 1000 === 0 || i === targetRows.length - 1) {
       console.log(`  📝 パターン1: ${formatProgress(i + 1, targetRows.length, startTime)}`);
     }
   }
@@ -140,7 +190,7 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
     row[idxD] = '掲載';
     pattern2BaseRows.push(row);
 
-    if ((i + 1) % 5000 === 0 || i === targetRows.length - 1) {
+    if ((i + 1) % 1000 === 0 || i === targetRows.length - 1) {
       console.log(`  📝 パターン2: ${formatProgress(i + 1, targetRows.length, startTime2)}`);
     }
   }
@@ -162,7 +212,6 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
   return { path1, path2 };
 }
 
-// ───【Shift_JISの元ファイルを正しく読み込む修正＋詳細デバッグログ】───
 function processCSVFile(filePath, accountName) {
   if (!fs.existsSync(filePath)) {
     console.log(`⚠️ 【${accountName}】ファイルが見つかりません: ${filePath}`);
@@ -176,42 +225,21 @@ function processCSVFile(filePath, accountName) {
 
   const content = iconv.decode(buffer, 'Shift_JIS');
   console.log(` 📊 [デバッグ] ${accountName} デコード後の文字数: ${content.length} 文字`);
-  
-  const lines = content.split(/\r?\n|\r/).filter(line => line.trim() !== '');
-  console.log(` 📊 [デバッグ] ${accountName} 分割後の総行数: ${lines.length} 行`);
-
-  if (lines.length <= 1) {
-    console.log(`⚠️ 【${accountName}】CSVの中身がヘッダーのみ、または空です。`);
-    return null;
-  }
-
-  const headerLine = lines[0];
-  const headerCols = parseCSVLine(headerLine);
-  console.log(` 📊 [デバッグ] ${accountName} ヘッダー解析列数: ${headerCols.length} 列`);
 
   const idxB = colNameToIndex('B');
   const idxGG = colNameToIndex('GG');
   const idxGH = colNameToIndex('GH');
   const requiredMaxIndex = Math.max(idxB, idxGG, idxGH);
 
-  const allRows = [];
-  let skippedByLengthCount = 0;
+  console.log(` ⏳ [デバッグ] セル内改行を考慮した高度なCSV解析を実行中... (少々お待ちください)`);
+  const { headerLine, rows: allRows } = parseCSVContentRobust(content, requiredMaxIndex);
 
-  for (let i = 1; i < lines.length; i++) {
-    const row = parseCSVLine(lines[i]);
-    if (row.length <= requiredMaxIndex) {
-      skippedByLengthCount++;
-      continue;
-    }
-    allRows.push(row);
+  console.log(` 📊 [デバッグ] 解析完了。正常に復元できた有効総データ行数: ${allRows.length} 行`);
+
+  if (allRows.length === 0) {
+    console.log(`⚠️ 【${accountName}】有効なデータ行が0件のため、処理をスキップします。`);
+    return null;
   }
-
-  if (skippedByLengthCount > 0) {
-    console.log(` ⚠️ [デバッグ] 列数不足により ${skippedByLengthCount} 行がスキップされました。`);
-  }
-
-  console.log(`📊 【${accountName}】有効データ数: ${allRows.length}件`);
-  if (allRows.length === 0) return null;
 
   // --- 通常版フィルタリング ---
   const normalFiltered = allRows.filter(row => {
@@ -341,7 +369,7 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   if (await mainInput.count() > 0) {
     targetInput = mainInput;
   } else {
-    console.log(`🔍 【${acc.name}】[${label}] メインDOMに見つからないため、iframe内をスキャンします...`);
+    console.log(`🔍 【${acc.name}】[${label}] メメインDOMに見つからないため、iframe内をスキャンします...`);
     const frames = page.frames();
     for (const frame of frames) {
       const frameInput = frame.locator('input[type="file"]').first();
@@ -531,7 +559,6 @@ async function runLoginAndProcess(browser, acc) {
 
     const processed = processCSVFile(downloadPath, acc.name);
     
-    // データがスキップされたなどの安全ガード対応
     if (!processed) {
       console.log(`⏭️ 【${acc.name}】有効データが取得できなかったため、取込工程をスキップします。`);
       return;

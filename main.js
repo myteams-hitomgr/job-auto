@@ -67,10 +67,9 @@ function getTargetDates() {
   };
 }
 
-// 💡 日付文字列を安全にパースするヘルパー（### 対策）
+// 日付文字列を安全にパースするヘルパー（### 対策）
 function safeParseDate(dateStr) {
   const cleanStr = dateStr.replace(/"/g, '').trim();
-  // 万が一セルの幅不足などで変な文字列になっていた場合のフォールバック
   if (cleanStr.includes('#') || !cleanStr.includes('/')) {
     return new Date(); // 本日の日付で代用してエラー落ちを防ぐ
   }
@@ -156,10 +155,9 @@ function processCSVFile(filePath, accountName) {
     allRows.push(row);
   }
 
-  // 💡 0件スキップの厳しい絞り込みを完全に無くし、すべての行を対象にします
   const normalFiltered = [...allRows];
 
-  // 💡 ### 対策を施した安全なソート処理
+  // 開始日順にソート（### 対策付き）
   normalFiltered.sort((x, y) => {
     const dateX = safeParseDate(x[idxB]);
     const dateY = safeParseDate(y[idxB]);
@@ -289,7 +287,8 @@ async function runLoginAndProcess(browser, acc) {
   page.on('dialog', async d => await d.accept());
 
   try {
-    await page.goto(acc.url, { waitUntil: 'networkidle'); 
+    // 💡 カッコ閉じのエラーをしっかり修正しました
+    await page.goto(acc.url, { waitUntil: 'networkidle' }); 
     await page.locator('input[type="text"], input[type="email"]').first().fill(acc.id);
     await page.locator('input[type="password"]').first().fill(acc.password);
     await page.locator('button, input[type="submit"], a:has-text("ログイン")').first().click();

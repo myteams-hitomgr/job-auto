@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
-const iconv = require('iconv-lite'); // 👈 文字化けを完全に直すための部品を使います
+const iconv = require('iconv-lite');
 
 const accounts = [
   { 
@@ -26,8 +26,7 @@ function colNameToIndex(colName) {
   return index - 1;
 }
 
-// ───【セル内改行を完璧に処理する堅牢なパーサー】───
-function parseCSVContentRobust(content, requiredMaxIndex) {
+function parseCSVContentRobust(content) {
   const rows = [];
   let currentRawLine = '';
   let inQuotes = false;
@@ -55,7 +54,7 @@ function parseCSVContentRobust(content, requiredMaxIndex) {
           isHeader = false;
         } else {
           const parsed = parseSingleCSVLine(trimmedLine);
-          if (parsed.length > requiredMaxIndex) {
+          if (parsed.length > 0 && parsed[0] !== '') {
             rows.push(parsed);
           }
         }
@@ -66,7 +65,7 @@ function parseCSVContentRobust(content, requiredMaxIndex) {
   
   if (currentRawLine.trim() && !isHeader) {
     const parsed = parseSingleCSVLine(currentRawLine.trim());
-    if (parsed.length > requiredMaxIndex) rows.push(parsed);
+    if (parsed.length > 0 && parsed[0] !== '') rows.push(parsed);
   }
   
   return { headerLine, rows };
@@ -91,10 +90,6 @@ function parseSingleCSVLine(line) {
   return result;
 }
 
-function parseCSVLine(line) {
-  return parseSingleCSVLine(line);
-}
-
 function toCSVLine(arr) {
   return arr.map(val => {
     if (val && (val.includes(',') || val.includes('"') || val.includes('\n') || val.includes('\r'))) {
@@ -117,7 +112,6 @@ function getTargetDates() {
   };
 }
 
-// ───【Shift_JISでCSVを正しく保存する修正】───
 function generatePatternFiles(headerLine, targetRows, basePath, accountName, label) {
   const idxA = colNameToIndex('A');
   const idxB = colNameToIndex('B');
@@ -178,7 +172,6 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
   return { path1, path2 };
 }
 
-// ───【Shift_JISの元ファイルを正しく読み込む修正】───
 function processCSVFile(filePath, accountName) {
   if (!fs.existsSync(filePath)) {
     console.log(`⚠️ 【${accountName}】ファイルが見つかりません: ${filePath}`);
@@ -193,18 +186,17 @@ function processCSVFile(filePath, accountName) {
   const idxB = colNameToIndex('B');
   const idxGG = colNameToIndex('GG');
   const idxGH = colNameToIndex('GH');
-  const requiredMaxIndex = Math.max(idxB, idxGG, idxGH);
 
-  const { headerLine, rows: allRows } = parseCSVContentRobust(content, requiredMaxIndex);
+  const { headerLine, rows: allRows } = parseCSVContentRobust(content);
 
   if (allRows.length === 0) return null;
 
+  // 通常版フィルタリング（GG列とGH列が両方有効な求人を削除）
   const normalFiltered = allRows.filter(row => {
     const valGG = row[idxGG] ? row[idxGG].replace(/"/g, '').trim() : '';
     const valGH = row[idxGH] ? row[idxGH].replace(/"/g, '').trim() : '';
-    if (valGG === '0' || valGG === '') return false;
-    if (valGH === '0' || valGH === '') return false;
-    return true;
+    const isBothActive = (valGG !== '0' && valGG !== '') && (valGH !== '0' && valGH !== '');
+    return !isBothActive; 
   });
 
   normalFiltered.sort((x, y) => {
@@ -215,9 +207,10 @@ function processCSVFile(filePath, accountName) {
   const normalTargetRows = normalFiltered.slice(0, 3990);
   const normalFiles = generatePatternFiles(headerLine, normalTargetRows, filePath, accountName, 'normal');
 
+  // PV版フィルタリング＆ソート
   const pvSorted = [...allRows].sort((x, y) => {
-    const valX = parseFloat(x[idxGH].replace(/"/g, '').trim()) || 0;
-    const valY = parseFloat(y[idxGH].replace(/"/g, '').trim()) || 0;
+    const valX = parseFloat(x[idxGH] ? x[idxGH].replace(/"/g, '').trim() : 0) || 0;
+    const valY = parseFloat(y[idxGH] ? y[idxGH].replace(/"/g, '').trim() : 0) || 0;
     return valY - valX;
   });
 
@@ -382,18 +375,10 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   await targetClickBtn.click({ force: true, timeout: 15000 });
   console.log(`🚀 【${acc.name}】[${label}] クリックイベントの送信完了。`);
   
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(4000);
 
-  console.log(`👉 【${acc.name}】[${label}] 自動遷移による『取込ファイル一覧』への到着を待機しています...`);
-  try {
-    await page.waitForFunction(() => {
-      return document.body.innerText.includes('取込ファイル一覧') && !window.location.href.includes('rec_recruitments');
-    }, { timeout: 30000 });
-  } catch (moveErr) {
-    console.log(`⚠️ 自動遷移が確認できないため、直URLで取込ファイル一覧へ強制移動をかけます。`);
-    const historyUrl = acc.url.replace('/login/', '/rec_import_histories');
-    await page.goto(historyUrl, { waitUntil: 'networkidle' }).catch(() => {});
-  }
+  console.log(`👉 【${acc.name}】[${label}] 上部メニューの矢印ボタンにマウスを乗せ、「取込ファイル一覧」へ移動します...`);
+  await navigateViaMenuOrUrl(page, acc, "取込ファイル一覧", "rec_import_histories");
   
   console.log(`📄 【${acc.name}】[${label}] 『取込ファイル一覧』画面への同期完了。`);
 
@@ -431,7 +416,7 @@ async function runLoginAndProcess(browser, acc) {
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
     let loopCount = 1;
-    const watchStartTime = Date.now(); // ─── 進捗計算の基準時間をリセット ───
+    const watchStartTime = Date.now(); 
 
     while (true) {
       await page.waitForTimeout(5000);
@@ -461,13 +446,10 @@ async function runLoginAndProcess(browser, acc) {
         break;
       }
       
-      // ───【以前の詳細進捗ログロジックの完全復元】───
-      // 6ループ(30秒)ごと、または最初のループで詳細進捗を計算して出力
       if (loopCount === 1 || loopCount % 6 === 0) {
         const displayStatus = statusText.trim() || "読み込み中";
         let displayDetail = detailText.trim() || "...";
         
-        // 詳細テキスト（例: "38600/41692件出力中"）から数字をパースして残り時間を独自計算
         const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
         if (match) {
           const currentCount = parseInt(match[1], 10);

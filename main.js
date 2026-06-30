@@ -463,22 +463,24 @@ async function runLoginAndProcess(browser, acc) {
 
 (async () => {
   const browser = await chromium.launch();
-  console.log("🏁 4大タスク一括・交互連続ループを開始します。(停止は Ctrl+C)");
+  console.log("🏁 4大タスク一括処理を開始します。");
   
-  while (true) {
-    for (const acc of accounts) {
-      console.log(`🚀 ==========================================`);
-      console.log(`🚀 アカウント【${acc.name}】通常・PV（計4タスク）を開始`);
-      console.log(`🚀 ==========================================`);
-      
-      try {
-        await runLoginAndProcess(browser, acc);
-      } catch (err) {
-        console.log(`⚠️ アカウント【${acc.name}】で例外エラー。次のアカウントへリレーします。`);
-      }
-      
-      console.log(`💤 セッション競合防止のため、30秒間のインターバルを挟みます...`);
-      await new Promise(resolve => setTimeout(resolve, 30000));
+  for (const acc of accounts) {
+    console.log(`🚀 ==========================================`);
+    console.log(`🚀 アカウント【${acc.name}】通常・PV（計4タスク）を開始`);
+    console.log(`🚀 ==========================================`);
+    
+    try {
+      await runLoginAndProcess(browser, acc);
+    } catch (err) {
+      console.log(`⚠️ アカウント【${acc.name}】で例外エラー。次のアカウントへ移行します。`);
     }
+    
+    console.log(`💤 セッション競合防止のため、30秒間のインターバルを挟みます...`);
+    await new Promise(resolve => setTimeout(resolve, 30000));
   }
+
+  // 最後にブラウザをしっかり閉じて終了する
+  await browser.close();
+  console.log("🎉 すべてのアカウントの処理が正常に終了しました。");
 })();

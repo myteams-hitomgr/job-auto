@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
-const iconv = require('iconv-lite');
+const iconv = require('iconv-lite'); // 💡 文字化けを完全に直すための部品を使います
 
 const accounts = [
   { 
@@ -67,19 +67,19 @@ function getTargetDates() {
   };
 }
 
-// 日付文字列を安全にパースするヘルパー（### 対策）
+// 💡 日付文字列を安全にパースするヘルパー（### 対策）
 function safeParseDate(dateStr) {
   const cleanStr = dateStr.replace(/"/g, '').trim();
   if (cleanStr.includes('#') || !cleanStr.includes('/')) {
-    return new Date();
+    return new Date(); // 壊れたデータは本日の日付で安全に補完
   }
   const d = new Date(cleanStr);
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
-// 💡 ここに進捗表示（残り時間計算）のロジックを復活させました！
+// 💡 進捗表示（件数と残り時間を計算して出力するログ用ヘルパー）
 function formatProgress(current, total, startTime) {
-  const elapsed = (Date.now() - startTime) / 1000; // 経過秒数
+  const elapsed = (Date.now() - startTime) / 1000;
   const percent = ((current / total) * 100).toFixed(1);
   
   if (current === 0) return `${current}/${total}件完了 (${percent}%)`;
@@ -93,6 +93,7 @@ function formatProgress(current, total, startTime) {
   return `${current}/${total}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
 }
 
+// ───【Shift_JISでCSVを正しく保存する修正】───
 function generatePatternFiles(headerLine, targetRows, basePath, accountName, label) {
   const idxA = colNameToIndex('A');
   const idxB = colNameToIndex('B');
@@ -100,10 +101,9 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
   const idxD = colNameToIndex('D');
   const idxK = colNameToIndex('K');
 
-  console.log(`⏳ 【${accountName}】【${label}】パターン1・2のデータ作成を開始します... (総数: ${targetRows.length}件)`);
+  console.log(` ⚙️ 【${accountName}】【${label}】パターン1データ生成を開始 (総数: ${targetRows.length}件)...`);
   const startTime = Date.now();
 
-  // パターン1の作成と進捗表示
   const pattern1Rows = [];
   for (let i = 0; i < targetRows.length; i++) {
     const row = [...targetRows[i]];
@@ -118,17 +118,18 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
     row[idxD] = '非掲載';
     pattern1Rows.push(row);
 
-    // 5000件ごとに進捗を出す
+    // 5000件ごと、または最後に進捗を表示
     if ((i + 1) % 5000 === 0 || i === targetRows.length - 1) {
-      console.log(` 📝 パターン1加工: ${formatProgress(i + 1, targetRows.length, startTime)}`);
+      console.log(`  📝 パターン1: ${formatProgress(i + 1, targetRows.length, startTime)}`);
     }
   }
 
   const path1 = basePath.replace('.csv', `_${label}_pattern1.csv`);
   const content1 = [headerLine, ...pattern1Rows.map(toCSVLine)].join('\r\n');
   fs.writeFileSync(path1, iconv.encode(content1, 'Shift_JIS'));
+  console.log(`✅ 【${accountName}】【${label}】パターン1 CSV保存完了(Shift_JIS): ${path1}`);
 
-  // パターン2の作成と進捗表示
+  console.log(` ⚙️ 【${accountName}】【${label}】パターン2データ生成を開始...`);
   const dates = getTargetDates();
   const pattern2BaseRows = [];
   const startTime2 = Date.now();
@@ -143,7 +144,7 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
     pattern2BaseRows.push(row);
 
     if ((i + 1) % 5000 === 0 || i === targetRows.length - 1) {
-      console.log(` 📝 パターン2加工: ${formatProgress(i + 1, targetRows.length, startTime2)}`);
+      console.log(`  📝 パターン2: ${formatProgress(i + 1, targetRows.length, startTime2)}`);
     }
   }
 
@@ -153,23 +154,26 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
       pattern2BaseRows[i][idxK] = pattern2BaseRows[i - 1][idxK];
     }
     pattern2BaseRows[0][idxK] = lastKValue;
+    console.log(`🔄 【${accountName}】【${label}】K列（募集職種）のローテーション完了。`);
   }
 
   const path2 = basePath.replace('.csv', `_${label}_pattern2.csv`);
   const content2 = [headerLine, ...pattern2BaseRows.map(toCSVLine)].join('\r\n');
   fs.writeFileSync(path2, iconv.encode(content2, 'Shift_JIS'));
+  console.log(`✅ 【${accountName}】【${label}】パターン2 CSV保存完了(Shift_JIS): ${path2}`);
 
-  console.log(`✅ 【${accountName}】【${label}】ファイル保存完了。`);
   return { path1, path2 };
 }
 
+// ───【Shift_JISの元ファイルを正しく読み込む修正】───
+// 💡 旧コードと同じく、件数の絞り込み（filter）ロジックを完全に維持しています
 function processCSVFile(filePath, accountName) {
   if (!fs.existsSync(filePath)) {
     console.log(`⚠️ 【${accountName}】ファイルが見つかりません: ${filePath}`);
     return null;
   }
 
-  console.log(`🛠️ 【${accountName}】元のCSVを解析中...`);
+  console.log(`🛠️ 【${accountName}】CSVの加工処理を開始します...`);
   
   const buffer = fs.readFileSync(filePath);
   const content = iconv.decode(buffer, 'Shift_JIS');
@@ -179,26 +183,33 @@ function processCSVFile(filePath, accountName) {
 
   const headerLine = lines[0];
   const idxB = colNameToIndex('B');
+  const idxGG = colNameToIndex('GG');
   const idxGH = colNameToIndex('GH');
 
   const allRows = [];
   for (let i = 1; i < lines.length; i++) {
     const row = parseCSVLine(lines[i]);
-    if (row.length < Math.max(idxB, idxGH)) continue;
+    if (row.length < Math.max(idxB, idxGG, idxGH)) continue;
     allRows.push(row);
   }
 
-  console.log(`📊 総データ数: ${allRows.length}件。並び替えと絞り込みを行います。`);
-
-  const normalFiltered = [...allRows];
-  normalFiltered.sort((x, y) => {
-    const dateX = safeParseDate(x[idxB]);
-    const dateY = safeParseDate(y[idxB]);
-    return dateX - dateY;
+  // 元の絞り込み条件（GGとGHが0や空ではないデータ）を完全に再現
+  const normalFiltered = allRows.filter(row => {
+    const valGG = row[idxGG].replace(/"/g, '').trim();
+    const valGH = row[idxGH].replace(/"/g, '').trim();
+    if (valGG === '0' || valGG === '') return false;
+    if (valGH === '0' || valGH === '') return false;
+    return true;
   });
+
+  console.log(`📊 【${accountName}】総データ数: ${allRows.length}件 (通常絞り込み後: ${normalFiltered.length}件)。並び替えを行います。`);
+
+  // ① 通常版のソート（safeParseDateを適用）
+  normalFiltered.sort((x, y) => safeParseDate(x[idxB]) - safeParseDate(y[idxB]));
   const normalTargetRows = normalFiltered.slice(0, 3990);
   const normalFiles = generatePatternFiles(headerLine, normalTargetRows, filePath, accountName, 'normal');
 
+  // ② PV版のソート
   const pvSorted = [...allRows].sort((x, y) => {
     const valX = parseFloat(x[idxGH].replace(/"/g, '').trim()) || 0;
     const valY = parseFloat(y[idxGH].replace(/"/g, '').trim()) || 0;
@@ -206,11 +217,7 @@ function processCSVFile(filePath, accountName) {
   });
 
   const pvSliced = pvSorted.slice(0, 3990);
-  pvSliced.sort((x, y) => {
-    const dateX = safeParseDate(x[idxB]);
-    const dateY = safeParseDate(y[idxB]);
-    return dateX - dateY;
-  });
+  pvSliced.sort((x, y) => safeParseDate(x[idxB]) - safeParseDate(y[idxB]));
   const pvFiles = generatePatternFiles(headerLine, pvSliced, filePath, accountName, 'pv');
 
   return { normal: normalFiles, pv: pvFiles };
@@ -218,7 +225,7 @@ function processCSVFile(filePath, accountName) {
 
 async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
   try {
-    const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5)').first();
+    const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
     if (await menuHoverIcon.count() > 0) {
       await menuHoverIcon.hover();
       await page.waitForTimeout(1500);
@@ -237,44 +244,64 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
 
 async function waitImportLatestRow(page, acc, label, timeout = 20 * 60 * 1000) {
   const start = Date.now();
+
   while (true) {
     const result = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll('tr'));
       const dataRows = rows.filter(r => r.innerText.includes(':'));
+      
       const latest = dataRows[dataRows.length - 1];
       if (!latest) return { status: 'not_found' };
+
       const text = latest.innerText;
+
       if (text.includes('完了') || text.includes('一部エラー') || text.includes('エラー')) {
         return { status: 'done', text };
       }
+
       return { status: 'processing', text };
     });
 
-    console.log(`🔍 【${acc.name}】[${label}] 取込状態確認中... [${result.status}]`);
-    if (result.status === 'done') return true;
-    if (Date.now() - start > timeout) throw new Error("タイムアウトしました。");
+    console.log(`  🔍 【${acc.name}】[${label}] 取込状態チェック中... 現在の状態: [${result.status}]`);
+
+    if (result.status === 'done') {
+      console.log(`  ✅ 【${acc.name}】[${label}] 取込完了を確認: ${result.text.trim().replace(/\s+/g, ' ')}`);
+      return true;
+    }
+
+    if (Date.now() - start > timeout) {
+      throw new Error(`取込処理がタイムアウト（${timeout / 60000}分）しました。`);
+    }
+
     await page.waitForTimeout(10000);
+    console.log(`  🔄 【${acc.name}】[${label}] ページをリロードして再確認します...`);
     await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
   }
 }
 
 async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
+  console.log(`🚀 【${acc.name}】[${label}] アップロード処理を開始...`);
   const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
   await page.goto(recruitUrl, { waitUntil: 'networkidle' }).catch(() => {});
   await page.waitForTimeout(3000);
 
+  console.log(`  🔹 【${acc.name}】[${label}] 『ファイル取込予約』ポップアップを開きます...`);
   const openModalBtn = page.locator('a:has-text("ファイル取込予約")').first();
   await openModalBtn.waitFor({ state: 'visible', timeout: 10000 });
   await openModalBtn.click({ force: true });
+  
   await page.waitForTimeout(4000);
 
+  console.log(`  📤 【${acc.name}】[${label}] アップロード要素を探索中...`);
   let targetInput = null;
   let activeFrame = null; 
+
   const mainInput = page.locator('input[type="file"]').first();
   if (await mainInput.count() > 0) {
     targetInput = mainInput;
   } else {
-    for (const frame of page.frames()) {
+    const frames = page.frames();
+    for (const frame of frames) {
       const frameInput = frame.locator('input[type="file"]').first();
       if (await frameInput.count() > 0) {
         targetInput = frameInput;
@@ -284,19 +311,59 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
     }
   }
 
-  if (targetInput) await targetInput.setInputFiles(fileToUpload);
+  if (targetInput) {
+    await targetInput.setInputFiles(fileToUpload);
+    console.log(`  📂 【${acc.name}】[${label}] ファイルの選択に成功しました。`);
+  } else {
+    const customUploadBtn = page.locator('text=ファイルを選択, text=ファイル選択, button:has-text("選択"), .file-upload, .upload-area').first();
+    if (await customUploadBtn.count() > 0) {
+      await customUploadBtn.click({ force: true }).catch(() => {});
+    }
+    const retryInput = page.locator('input[type="file"]').first();
+    if (await retryInput.count() > 0) {
+      await retryInput.setInputFiles(fileToUpload).catch(() => {});
+    }
+  }
+  
   await page.waitForTimeout(3000);
 
+  console.log(`  👆 【${acc.name}】[${label}] 青色の『ファイル取込予約』確定ボタンをクリックします...`);
   let targetClickBtn = null;
   const targetContext = activeFrame || page;
-  const universalSelectors = [':text("ファイル取込予約")', 'a:has-text("ファイル取込予約")', '[class*="btn"]:has-text("ファイル取込予約")'];
+
+  const universalSelectors = [
+    ':text("ファイル取込予約")',
+    'a:has-text("ファイル取込予約")',
+    '[class*="btn"]:has-text("ファイル取込予約")',
+    'div:has-text("ファイル取込予約")',
+    'button:has-text("ファイル取ipal予約")'
+  ];
+
   for (const selector of universalSelectors) {
     const el = targetContext.locator(selector).last();
-    if (await el.count() > 0) { targetClickBtn = el; break; }
+    if (await el.count() > 0) {
+      targetClickBtn = el;
+      break;
+    }
   }
 
-  if (!targetClickBtn) throw new Error("❌ ボタン特定不可");
-  await targetClickBtn.click({ force: true });
+  if (!targetClickBtn) {
+    for (const f of page.frames()) {
+      const el = f.locator(':text("ファイル取込予約")').last();
+      if (await el.count() > 0) {
+        targetClickBtn = el;
+        break;
+      }
+    }
+  }
+
+  if (!targetClickBtn) {
+    throw new Error("❌ 青い『ファイル取込予約』ボタンを特定できませんでした。");
+  }
+
+  await targetClickBtn.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+  await targetClickBtn.click({ force: true, timeout: 15000 });
+  
   await page.waitForTimeout(5000);
 
   try {
@@ -307,7 +374,8 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
     const historyUrl = acc.url.replace('/login/', '/rec_import_histories');
     await page.goto(historyUrl, { waitUntil: 'networkidle' }).catch(() => {});
   }
-
+  
+  console.log(`  📄 【${acc.name}】[${label}] 『取込ファイル一覧』画面へ同期しました。`);
   await waitImportLatestRow(page, acc, label);
 }
 
@@ -315,27 +383,39 @@ async function runLoginAndProcess(browser, acc) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   page.setDefaultTimeout(0); 
-  page.on('dialog', async d => await d.accept());
+
+  page.on('dialog', async dialog => {
+    console.log(`💬 【${acc.name}】ダイアログ検出: ${dialog.message()}`);
+    await dialog.accept();
+  });
 
   try {
+    console.log(`🌐 【${acc.name}】ログインページへアクセス中...`);
     await page.goto(acc.url, { waitUntil: 'networkidle' }); 
-    await page.locator('input[type="text"], input[type="email"]').first().fill(acc.id);
+    await page.locator('input[type="text"], input[type="email"], input[name*="login"]').first().fill(acc.id);
     await page.locator('input[type="password"]').first().fill(acc.password);
-    await page.locator('button, input[type="submit"], a:has-text("ログイン")').first().click();
+    await page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first().click();
+    await page.waitForLoadState('networkidle').catch(() => {});
 
+    console.log(`🏃 【${acc.name}】求人一覧画面へ移動中...`);
     const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
     await page.goto(recruitUrl, { waitUntil: 'networkidle' });
 
-    const exportBtn = page.locator('a:has-text("ファイル取出予約")').first();
+    console.log(`👉 【${acc.name}】「ファイル取出予約」を実行します（全求人対象）`);
+    const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約")').first();
     await exportBtn.waitFor({ state: 'visible', timeout: 30000 });
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
+    console.log(`📡 【${acc.name}】「取出ファイル一覧」へ移動しています...`);
     await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
+    let loopCount = 1;
+
     while (true) {
       await page.waitForTimeout(5000);
+
       const rows = await page.locator('table tr').all();
       let statusText = "";
       let detailText = "";
@@ -352,14 +432,26 @@ async function runLoginAndProcess(browser, acc) {
         }
       }
 
+      if (statusText.length > 0 && (statusText.includes('キャンセル') || detailText.includes('キャンセル'))) {
+        throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
+      }
+
       if (statusText.includes('完了') || statusText.includes('成功') || detailText.includes('rec_recruitments')) {
-        console.log(`✅ 【${acc.name}】CSVの生成完了を確認しました！`);
+        console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
         break;
       }
-      await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+      
+      if (loopCount % 6 === 0) {
+        const displayStatus = statusText.trim() || "読み込み中";
+        const displayDetail = detailText.trim() || "...";
+        console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${displayStatus}] ${displayDetail}`);
+      }
+      loopCount++;
     }
 
+    console.log(`👉 【${acc.name}】ダウンロードリンクを捕捉中...`);
     await page.waitForTimeout(2000); 
+    
     const finalRows = await page.locator('table tr').all();
     let downloadLink = null;
     
@@ -368,28 +460,41 @@ async function runLoginAndProcess(browser, acc) {
       if (cells.length >= 4) {
         const dateText = await cells[0].evaluate(el => el.textContent || "");
         if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
-          downloadLink = row.locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
+          downloadLink = row.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
           break;
         }
       }
     }
 
-    if (!downloadLink) throw new Error("DLリンク特定不可");
-    const [download] = await Promise.all([page.waitForEvent('download'), downloadLink.click({ force: true })]);
+    if (!downloadLink) {
+      throw new Error("CSVのダウンロードリンクを特定できませんでした。");
+    }
+
+    // 💡 タイムアウトを無制限（timeout: 0）にし、ダウンロード状況を詳しく実況
+    console.log(`📥 【${acc.name}】CSVファイルをダウンロード中... (大容量のため1〜5分ほど反応が止まるように見えますが正常です)`);
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 0 }), 
+      downloadLink.click({ force: true })
+    ]);
     
     const downloadPath = path.join(__dirname, `${acc.name}_raw_data.csv`);
     await download.saveAs(downloadPath);
+    console.log(`💾 【${acc.name}】RAWデータのダウンロード・保存に成功しました！`);
 
     const processed = processCSVFile(downloadPath, acc.name);
-    if (!processed) throw new Error("加工失敗");
+    if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 
+    // 4つの加工ファイルを順次アップロード＆監視
     await uploadAndWatchSingleFile(page, acc, processed.normal.path1, '①通常版・非掲載');
     await uploadAndWatchSingleFile(page, acc, processed.normal.path2, '②通常版・掲載');
     await uploadAndWatchSingleFile(page, acc, processed.pv.path1, '③PV版・非掲載');
     await uploadAndWatchSingleFile(page, acc, processed.pv.path2, '④PV版・掲載');
 
+    console.log(`🎉 【${acc.name}】通常版・PV版を含む全 4 タスクの工程が正常終了しました。`);
+
   } catch (error) {
-    console.log(`⚠️ エラー: ${error.message}`);
+    console.log(`⚠️ 【${acc.name}】処理中にエラーが発生: ${error.message}`);
+    await page.screenshot({ path: `error_${acc.name}.png`, fullPage: true });
   } finally {
     await context.close(); 
   }
@@ -397,10 +502,22 @@ async function runLoginAndProcess(browser, acc) {
 
 (async () => {
   const browser = await chromium.launch();
-  for (const acc of accounts) {
-    await runLoginAndProcess(browser, acc);
-    await new Promise(r => setTimeout(r, 30000));
+  console.log("🏁 4大タスク一括・交互連続ループを開始します。(停止は Ctrl+C)");
+  
+  while (true) {
+    for (const acc of accounts) {
+      console.log(`🚀 ==========================================`);
+      console.log(`🚀 アカウント【${acc.name}】通常・PV（計4タスク）を開始`);
+      console.log(`🚀 ==========================================`);
+      
+      try {
+        await runLoginAndProcess(browser, acc);
+      } catch (err) {
+        console.log(`⚠️ アカウント【${acc.name}】で例外エラー。次のアカウントへリレーします。`);
+      }
+      
+      console.log(`💤 セッション競合防止のため、30秒間のインターバルを挟みます...`);
+      await new Promise(resolve => setTimeout(resolve, 30000));
+    }
   }
-  await browser.close();
-  console.log("🎉 すべて完了しました");
 })();

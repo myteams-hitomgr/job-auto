@@ -245,40 +245,59 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
   await page.waitForTimeout(2000);
 }
 
+// 💡 修正箇所：「取出ファイル一覧」の監視ロジックと完全に統一（上からループして1行目の変化だけを見る）
 async function waitImportLatestRow(page, acc, label, timeout = 20 * 60 * 1000) {
   const start = Date.now();
+  let loopCount = 1;
 
   while (true) {
-    const result = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('tr'));
-      const dataRows = rows.filter(r => r.innerText.includes(':'));
-      
-      const latest = dataRows[dataRows.length - 1];
-      if (!latest) return { status: 'not_found' };
+    await page.waitForTimeout(5000);
 
-      const text = latest.innerText;
+    const rows = await page.locator('table tr').all();
+    let statusText = "";
+    let detailText = "";
+    let fullRowText = "";
 
-      if (text.includes('完了') || text.includes('一部エラー') || text.includes('エラー')) {
-        return { status: 'done', text };
+    // 「取出ファイル一覧」と全く同じロジック：上から順に行を見て、最初の日付入りデータ行（1行目）を捕捉する
+    for (const row of rows) {
+      const cells = await row.locator('td').all();
+      if (cells.length >= 4) {
+        const dateText = await cells[0].evaluate(el => el.textContent || "");
+        // 2026年や日付区切りがある有効なデータ行のみ対象
+        if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
+          statusText = await cells[4].evaluate(el => el.textContent || ""); // ステータス列 (インデックス4)
+          detailText = await cells[5].evaluate(el => el.textContent || ""); // 詳細列 (インデックス5)
+          fullRowText = await row.evaluate(el => el.innerText || "");
+          break; // 最初に見つかった1行目（最新リクエスト）だけを見れば良いのでループを抜ける
+        }
       }
+    }
 
-      return { status: 'processing', text };
-    });
+    if (statusText.length > 0 && (statusText.includes('キャンセル') || detailText.includes('キャンセル'))) {
+      throw new Error(`管理画面側で取込リクエストが「キャンセル」されました。`);
+    }
 
-    console.log(`🔍 【${acc.name}】[${label}] 状態チェック中... 現在の最新行状態: [${result.status}]`);
-
-    if (result.status === 'done') {
-      console.log(`✅ 【${acc.name}】[${label}] 最新行の取込完了を確認: ${result.text.trim().replace(/\s+/g, ' ')}`);
-      return true;
+    // 1行目のステータスが「完了」「成功」または詳細に完了件数が記載された場合
+    if (statusText.includes('完了') || statusText.includes('成功') || detailText.includes('件')) {
+      console.log(`✅ 【${acc.name}】[${label}] 取込ファイル一覧の最新行（1行目）で処理完了を確認しました！`);
+      console.log(`📄 完了行情報: ${fullRowText.trim().replace(/\s+/g, ' ')}`);
+      break; // 確実に完了したので、次のファイルのアップロード処理へ進む
+    }
+    
+    // 定期ログ出力
+    if (loopCount === 1 || loopCount % 6 === 0) {
+      const displayStatus = statusText.trim() || "待機中/読み込み中";
+      const displayDetail = detailText.trim() || "...";
+      console.log(`⏳ 【${acc.name}】[${label}] 取込の進捗を監視中... 現在の状態: [${displayStatus}] ${displayDetail}`);
     }
 
     if (Date.now() - start > timeout) {
       throw new Error(`取込処理がタイムアウト（${timeout / 60000}分）しました。`);
     }
 
-    await page.waitForTimeout(10000);
-
-    console.log(`🔄 【${acc.name}】[${label}] ページをリロードして再確認します...`);
+    loopCount++;
+    
+    // ページを再読み込みして最新化
     await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
   }
 }
@@ -380,8 +399,9 @@ async function uploadAndWatchSingleFile(page, acc, fileToUpload, label) {
   console.log(`👉 【${acc.name}】[${label}] 上部メニューの矢印ボタンにマウスを乗せ、「取込ファイル一覧」へ移動します...`);
   await navigateViaMenuOrUrl(page, acc, "取込ファイル一覧", "rec_import_histories");
   
-  console.log(`📄 【${acc.name}】[${label}] 『取込ファイル一覧』画面への同期完了。`);
+  console.log(`📄 【${acc.name}】[${label}] 『取込ファイル一覧』画面への同期完了。監視を開始します。`);
 
+  // 最新行の監視を開始
   await waitImportLatestRow(page, acc, label);
 }
 

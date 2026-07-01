@@ -243,7 +243,7 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
   await page.waitForTimeout(2000);
 }
 
-// 改修ポイント1: ファイルをアップロードする「だけ」の関数（待機処理は分離）
+// 1ファイルのみをアップロードする独立関数
 async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   console.log(`👉 【${acc.name}】[${label}] 画面状態をリセットし募集一覧画面へ移動します...`);
   const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
@@ -339,10 +339,19 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   await page.waitForTimeout(4000);
 }
 
-// 改修ポイント2: 最新の「2行」を同時にピン留め監視する関数
+// 改修のコア：2ファイル監視 ＋ 5分データ未検出時のメニューホバー再移動機能
 async function waitImportLatestTwoRows(page, acc, batchLabel, timeout = 24 * 60 * 60 * 1000) {
   const start = Date.now();
   let loopCount = 1;
+  
+  // 5分（300,000ミリ秒）データ未検出（同期中）が続いたかを測るタイマー
+  let lastDataFoundTime = Date.now(); 
+
+  const moveToImportHistory = async () => {
+    console.log(`🔄 【${acc.name}】[${batchLabel}] データ未検出から5分が経過しました。メニューホバーから「取込ファイル一覧」を再読込します...`);
+    await navigateViaMenuOrUrl(page, acc, "取込ファイル一覧", "rec_import_histories");
+    lastDataFoundTime = Date.now(); // 画面を再移動したためタイマーをリセット
+  };
 
   console.log(`👉 【${acc.name}】[${batchLabel}] 上部メニューの矢印ボタンにマウスを乗せ、「取込ファイル一覧」へ移動します...`);
   await navigateViaMenuOrUrl(page, acc, "取込ファイル一覧", "rec_import_histories");
@@ -353,12 +362,13 @@ async function waitImportLatestTwoRows(page, acc, batchLabel, timeout = 24 * 60 
 
     let row1Finished = false;
     let row2Finished = false;
-    let row1StatusText = "データ同期中";
-    let row2StatusText = "データ同期中";
+    let row1StatusText = "";
+    let row2StatusText = "";
 
-    // 青いヘッダーの下の1行目(最新)と、その下の2行目を固定でキャッチ
     const row1 = page.locator('table tr:has(td)').first();
     const row2 = page.locator('table tr:has(td)').nth(1);
+
+    let foundAnyText = false;
 
     // 1行目のステータスチェック
     if (await row1.count() > 0) {
@@ -366,7 +376,11 @@ async function waitImportLatestTwoRows(page, acc, batchLabel, timeout = 24 * 60 
       if (cells1.length >= 6) {
         const status = (await cells1[4].evaluate(el => el.textContent || "")).trim();
         const detail = (await cells1[5].evaluate(el => el.textContent || "")).trim();
-        row1StatusText = status ? `[${status}] ${detail}` : "データ同期中";
+        
+        if (status || detail) {
+          row1StatusText = `[${status}] ${detail}`;
+          foundAnyText = true; // 有効なテキストを検出
+        }
 
         if (status.includes('キャンセル') || detail.includes('キャンセル')) {
           throw new Error(`管理画面側で取込リクエスト(1行目)が「キャンセル」されました。`);
@@ -383,7 +397,11 @@ async function waitImportLatestTwoRows(page, acc, batchLabel, timeout = 24 * 60 
       if (cells2.length >= 6) {
         const status = (await cells2[4].evaluate(el => el.textContent || "")).trim();
         const detail = (await cells2[5].evaluate(el => el.textContent || "")).trim();
-        row2StatusText = status ? `[${status}] ${detail}` : "データ同期中";
+        
+        if (status || detail) {
+          row2StatusText = `[${status}] ${detail}`;
+          foundAnyText = true; // 有効なテキストを検出
+        }
 
         if (status.includes('キャンセル') || detail.includes('キャンセル')) {
           throw new Error(`管理画面側で取込リクエスト(2行目)が「キャンセル」されました。`);
@@ -391,6 +409,18 @@ async function waitImportLatestTwoRows(page, acc, batchLabel, timeout = 24 * 60 
         if ((status === '完了' || status === '成功') && (detail.includes('成功') || detail.includes('秒') || detail.includes('件'))) {
           row2Finished = true;
         }
+      }
+    }
+
+    // 💡 リカバリーロジックの判定
+    if (foundAnyText) {
+      // 1行目または2行目に「進行中」や「完了」など何かしら文字が入っていれば時刻を更新
+      lastDataFoundTime = Date.now();
+    } else {
+      // 両方とも空っぽ（データ同期中）の場合、最後に文字を見てから5分経っているかチェック
+      if (Date.now() - lastDataFoundTime > 5 * 60 * 1000) {
+        await moveToImportHistory();
+        continue; // 画面を再読み込みしたので、今回のループの残りの処理はスキップして次へ
       }
     }
 
@@ -402,7 +432,9 @@ async function waitImportLatestTwoRows(page, acc, batchLabel, timeout = 24 * 60 
     
     // 定期ログ出力（30秒ごと）
     if (loopCount === 1 || loopCount % 6 === 0) {
-      console.log(`⏳ 【${acc.name}】[${batchLabel}] 進捗を監視中... \n   └ 1行目(最新): ${row1StatusText}\n   └ 2行目:       ${row2StatusText}`);
+      const log1 = row1StatusText || "データ同期中";
+      const log2 = row2StatusText || "データ同期中";
+      console.log(`⏳ 【${acc.name}】[${batchLabel}] 進捗を監視中... \n   └ 1行目(最新): ${log1}\n   └ 2行目:       ${log2}`);
     }
 
     if (Date.now() - start > timeout) {
@@ -536,20 +568,20 @@ async function runLoginAndProcess(browser, acc) {
     const processed = processCSVFile(downloadPath, acc.name);
     if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 
-    // 改修ポイント3: 2ファイル連続アップロード ➔ 2行同時監視のフローに変更
-    
-    // ====== 【通常版バッチ処理】 ======
+    // ====== 【通常版バッチ処理: 2ファイル連続】 ======
     console.log(`📦 【${acc.name}】[通常版] 2ファイル連続アップロードを開始します。`);
     await uploadSingleFileOnly(page, acc, processed.normal.path1, '①通常版・非掲載');
     await uploadSingleFileOnly(page, acc, processed.normal.path2, '②通常版・掲載');
-    // 取込ファイル一覧へ移動し、最新の2行がともに完了するまで待つ
+    
+    // 最新2行の進捗を監視（5分間データ消失した場合は自動でメニューホバーして再移動）
     await waitImportLatestTwoRows(page, acc, '通常版セット（非掲載＆掲載）');
 
-    // ====== 【PV版バッチ処理】 ======
+    // ====== 【PV版バッチ処理: 2ファイル連続】 ======
     console.log(`📦 【${acc.name}】[PV版] 2ファイル連続アップロードを開始します。`);
     await uploadSingleFileOnly(page, acc, processed.pv.path1, '③PV版・非掲載');
     await uploadSingleFileOnly(page, acc, processed.pv.path2, '④PV版・掲載');
-    // 取込ファイル一覧へ移動し、最新の2行がともに完了するまで待つ
+    
+    // 最新2行の進捗を監視（5分間データ消失した場合は自動でメニューホバーして再移動）
     await waitImportLatestTwoRows(page, acc, 'PV版セット（非掲載＆掲載）');
 
     console.log(`🎉 【${acc.name}】通常版・PV版を含む全 4 タスク（2ファイルずつ連続処理）の工程が正常終了しました。`);

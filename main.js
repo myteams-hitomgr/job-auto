@@ -228,7 +228,7 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
     const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
     if (await menuHoverIcon.count() > 0) {
       await menuHoverIcon.hover();
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(1000);
       const subMenuLink = page.locator(`a:has-text("${targetText}")`).first();
       if (await subMenuLink.count() > 0 && await subMenuLink.isVisible()) {
         await subMenuLink.click();
@@ -240,22 +240,21 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
   }
   const destinationUrl = acc.url.replace('/login/', `/${targetUrlSegment}`);
   await page.goto(destinationUrl, { waitUntil: 'networkidle' }).catch(() => {});
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1500);
 }
 
 // ファイルをアップロードする独立関数
 async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   console.log(`👉 【${acc.name}】[${label}] 募集一覧画面へ移動します...`);
   const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
-  await page.goto(recruitUrl, { waitUntil: 'networkidle' }).catch(() => {});
-  await page.waitForTimeout(3000);
+  await page.goto(recruitUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
 
   console.log(`👉 【${acc.name}】[${label}] 『ファイル取込予約』ボタンをクリックしてポップアップを開きます...`);
   const openModalBtn = page.locator('a:has-text("ファイル取込予約")').first();
   await openModalBtn.waitFor({ state: 'visible', timeout: 10000 });
   await openModalBtn.click({ force: true });
   
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(2000);
 
   console.log(`📤 【${acc.name}】[${label}] アップロード要素を探索中...`);
   let targetInput = null;
@@ -293,7 +292,7 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
     }
   }
   
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(1500);
 
   console.log(`🚀 【${acc.name}】[${label}] 青色の『ファイル取込予約』実行ボタンを確定します...`);
   
@@ -336,10 +335,12 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   await targetClickBtn.click({ force: true, timeout: 15000 });
   console.log(`🚀 【${acc.name}】[${label}] クリックイベントの送信完了。`);
   
-  await page.waitForTimeout(4000);
+  // 💡 【ここを修正】システム側で1件目の受付が確実に通るよう、30秒（30000ms）待機してから次へ進みます
+  console.log(`💤 サーバー側のバッファ確保のため、30秒間待機します...`);
+  await page.waitForTimeout(30000);
 }
 
-// 🎯 最上行（1行目）のみを徹底監視 ＋ 5分データ未検出時のメニューホバー再移動
+// 🎯 リクエスト日時の直下の行（最上行・1行目）のみを徹底監視するロジック
 async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 60 * 60 * 1000) {
   const start = Date.now();
   let loopCount = 1;
@@ -353,7 +354,7 @@ async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 6
 
   console.log(`👉 【${acc.name}】[${batchLabel}] 上部メニューの矢印ボタンにマウスを乗せ、「取込ファイル一覧」へ移動します...`);
   await navigateViaMenuOrUrl(page, acc, "取込ファイル一覧", "rec_import_histories");
-  console.log(`📄 【${acc.name}】[${batchLabel}] 監視を開始。2行目の完了後に動き出す「最上行（1行目）」のみを見守ります。`);
+  console.log(`📄 【${acc.name}】[${batchLabel}] 監視を開始。リクエスト日時のすぐ下の行（1行目）の進捗を見守ります。`);
 
   while (true) {
     await page.waitForTimeout(5000);
@@ -362,6 +363,7 @@ async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 6
     let row1StatusText = "";
     let foundAnyText = false;
 
+    // リクエスト日時のすぐ下の行
     const row1 = page.locator('table tr:has(td)').first();
 
     if (await row1.count() > 0) {
@@ -401,7 +403,7 @@ async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 6
     
     if (loopCount === 1 || loopCount % 6 === 0) {
       const log1 = row1StatusText || "データ同期中";
-      console.log(`⏳ 【${acc.name}】[${batchLabel}] 最終行の進捗を監視中... \n   └ 1行目(最上行): ${log1}`);
+      console.log(`⏳ 【${acc.name}】[${batchLabel}] リクエスト日時の下の行を監視中... \n   └ 1行目(最新): ${log1}`);
     }
 
     if (Date.now() - start > timeout) {
@@ -535,21 +537,21 @@ async function runLoginAndProcess(browser, acc) {
     const processed = processCSVFile(downloadPath, acc.name);
     if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 
-    // ====== 【通常版バッチ処理: 2ファイル連続で最速投入】 ======
-    console.log(`📦 【${acc.name}】[通常版] 2ファイル同時アップロードを実行します。`);
-    await uploadSingleFileOnly(page, acc, processed.normal.path1, '①通常版・非掲載');
-    await uploadSingleFileOnly(page, acc, processed.normal.path2, '②通常版・掲載');
+    // ====== 📦 【通常版セット投入】 ======
+    console.log(`📦 【${acc.name}】[通常版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
+    await uploadSingleFileOnly(page, acc, processed.normal.path1, '①通常版・非掲載（先）');
+    await uploadSingleFileOnly(page, acc, processed.normal.path2, '②通常版・掲載（後）');
     
-    // 後から動く最上行（1行目）のみをターゲットに監視（5分ストール時はメニューから再起動）
-    await waitImportLatestSingleRow(page, acc, '通常版セット（最終1行目待ち）');
+    // リクエスト日時のすぐ下の行（1行目）のみを徹底監視
+    await waitImportLatestSingleRow(page, acc, '通常版セット（最終行待ち）');
 
-    // ====== 【PV版バッチ処理: 2ファイル連続で最速投入】 ======
-    console.log(`📦 【${acc.name}】[PV版] 2ファイル同時アップロードを実行します。`);
-    await uploadSingleFileOnly(page, acc, processed.pv.path1, '③PV版・非掲載');
-    await uploadSingleFileOnly(page, acc, processed.pv.path2, '④PV版・掲載');
+    // ====== 📦 【PV版セット投入】 ======
+    console.log(`📦 【${acc.name}】[PV版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
+    await uploadSingleFileOnly(page, acc, processed.pv.path1, '③PV版・非掲載（先）');
+    await uploadSingleFileOnly(page, acc, processed.pv.path2, '④PV版・掲載（後）');
     
-    // 後から動く最上行（1行目）のみをターゲットに監視（5分ストール時はメニューから再起動）
-    await waitImportLatestSingleRow(page, acc, 'PV版セット（最終1行目待ち）');
+    // リクエスト日時のすぐ下の行（1行目）のみを徹底監視
+    await waitImportLatestSingleRow(page, acc, 'PV版セット（最終行待ち）');
 
     console.log(`🎉 【${acc.name}】通常版・PV版を含む全 4 タスクの工程が正常終了しました。`);
 

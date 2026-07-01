@@ -245,7 +245,7 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
   await page.waitForTimeout(2000);
 }
 
-// 💡 修正箇所：進行中の「〇〇/3990件」での誤判定を防ぎ、確実に完了・成功（または処理時間表記）するまで待つように変更しました
+// 💡 修正箇所：一瞬データが空欄になるタイミングをスルーし、完全に「完了」がテキストとして表示されるまで粘り強くリロード監視するように変更
 async function waitImportLatestRow(page, acc, label, timeout = 24 * 60 * 60 * 1000) {
   const start = Date.now();
   let loopCount = 1;
@@ -260,7 +260,7 @@ async function waitImportLatestRow(page, acc, label, timeout = 24 * 60 * 60 * 10
 
     for (const row of rows) {
       const cells = await row.locator('td').all();
-      if (cells.length >= 4) {
+      if (cells.length >= 6) { // 詳細列まで確実にあることを確認
         const dateText = await cells[0].evaluate(el => el.textContent || "");
         if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
           statusText = await cells[4].evaluate(el => el.textContent || ""); 
@@ -271,17 +271,17 @@ async function waitImportLatestRow(page, acc, label, timeout = 24 * 60 * 60 * 10
       }
     }
 
-    if (statusText.length > 0 && (statusText.includes('キャンセル') || detailText.includes('キャンセル'))) {
+    const cleanStatus = statusText.trim();
+    const cleanDetail = detailText.trim();
+
+    if (cleanStatus.includes('キャンセル') || cleanDetail.includes('キャンセル')) {
       throw new Error(`管理画面側で取込リクエストが「キャンセル」されました。`);
     }
 
-    // 💡 修正判定：進行中の「〇〇/〇〇件」ではなく、ステータスか詳細に「完了」「成功」、あるいは「（〇分〇秒）」のような確定表記が出た時だけを対象にします
+    // 💡 確定的な完了条件：ステータスが「完了」または「成功」になり、かつ詳細に「成功:」や「秒）」といった確定文字列が入っている場合のみ完了とみなす
     const isActuallyFinished = 
-      statusText.includes('完了') || 
-      statusText.includes('成功') || 
-      detailText.includes('成功') || 
-      /（\s*\d+\s*分\s*\d+\s*秒\s*）/.test(detailText) ||
-      /\(\s*\d+m\s*\d+s\s*\)/.test(detailText);
+      (cleanStatus === '完了' || cleanStatus === '成功') && 
+      (cleanDetail.includes('成功') || cleanDetail.includes('秒') || cleanDetail.includes('件'));
 
     if (isActuallyFinished) {
       console.log(`✅ 【${acc.name}】[${label}] 取込ファイル一覧の最新行（1行目）で処理完了を確認しました！`);
@@ -289,9 +289,10 @@ async function waitImportLatestRow(page, acc, label, timeout = 24 * 60 * 60 * 10
       break; 
     }
     
+    // 定期ログ出力（空欄の時は「データ更新中...」としてステータス見失いを防止）
     if (loopCount === 1 || loopCount % 6 === 0) {
-      const displayStatus = statusText.trim() || "待機中/読み込み中";
-      const displayDetail = detailText.trim() || "...";
+      const displayStatus = cleanStatus || "データ更新中";
+      const displayDetail = cleanDetail || "...";
       console.log(`⏳ 【${acc.name}】[${label}] 取込の進捗を監視中... 現在の状態: [${displayStatus}] ${displayDetail}`);
     }
 

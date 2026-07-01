@@ -243,7 +243,6 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
   await page.waitForTimeout(1500);
 }
 
-// ファイルをアップロードする独立関数
 async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   console.log(`👉 【${acc.name}】[${label}] 募集一覧画面へ移動します...`);
   const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
@@ -335,12 +334,11 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   await targetClickBtn.click({ force: true, timeout: 15000 });
   console.log(`🚀 【${acc.name}】[${label}] クリックイベントの送信完了。`);
   
-  // 💡 システム側で1件目の受付が確実に通るよう、30秒間（30000ms）待機してから次へ進みます
   console.log(`💤 サーバー側のバッファ確保のため、30秒間待機します...`);
   await page.waitForTimeout(30000);
 }
 
-// 🎯 リクエスト日時の直下の行（最上行・1行目）のみを100%正確に読み取り監視するロジック
+// 🎯 本物のデータ行（日付が入っている最初の行）だけをピンポイントに狙い撃ちして監視するロジック
 async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 60 * 60 * 1000) {
   const start = Date.now();
   let loopCount = 1;
@@ -363,28 +361,38 @@ async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 6
     let row1StatusText = "";
     let foundAnyText = false;
 
-    // リクエスト日時のすぐ下の行（実データが入る最初のtr）
-    const row1 = page.locator('table tr:has(td)').first();
+    // 💡 画面上のすべての tr をスキャンし、本物のデータ行を探し出します
+    const allRows = await page.locator('table tr').all();
+    let targetRowCells = null;
 
-    if (await row1.count() > 0) {
-      const cells1 = await row1.locator('td').all();
-      if (cells1.length >= 6) {
-        // innerText() を使うことで、「待機中」や「進行中」のステータス・文言を確実に取得します
-        const status = (await cells1[4].innerText().catch(() => "")).trim();
-        const detail = (await cells1[5].innerText().catch(() => "")).trim();
-        
-        if (status || detail) {
-          row1StatusText = `[${status}] ${detail}`;
-          foundAnyText = true; 
+    for (const row of allRows) {
+      const cells = await row.locator('td').all();
+      if (cells.length >= 6) {
+        // 1番目のセル（リクエスト日時）に日付形式（/や:）が含まれているかチェック
+        const dateText = (await cells[0].innerText().catch(() => "")).trim();
+        if (dateText.includes('/') || dateText.includes(':')) {
+          targetRowCells = cells; // これが最新の1行目データ
+          break; 
         }
+      }
+    }
 
-        if (status.includes('キャンセル') || detail.includes('キャンセル')) {
-          throw new Error(`管理画面側で取込リクエスト(1行目)が「キャンセル」されました。`);
-        }
-        
-        if ((status === '完了' || status === '成功') && (detail.includes('成功') || detail.includes('秒') || detail.includes('件'))) {
-          row1Finished = true;
-        }
+    // 本物のデータ行が特定できたら状態を取得
+    if (targetRowCells) {
+      const status = (await targetRowCells[4].innerText().catch(() => "")).trim();
+      const detail = (await targetRowCells[5].innerText().catch(() => "")).trim();
+      
+      if (status || detail) {
+        row1StatusText = `[${status}] ${detail}`;
+        foundAnyText = true; 
+      }
+
+      if (status.includes('キャンセル') || detail.includes('キャンセル')) {
+        throw new Error(`管理画面側で取込リクエスト(1行目)が「キャンセル」されました。`);
+      }
+      
+      if ((status === '完了' || status === '成功') && (detail.includes('成功') || detail.includes('秒') || detail.includes('件'))) {
+        row1Finished = true;
       }
     }
 
@@ -403,7 +411,7 @@ async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 6
     }
     
     if (loopCount === 1 || loopCount % 6 === 0) {
-      const log1 = row1StatusText || "データ同期中(完全に空白)";
+      const log1 = row1StatusText || "データ同期中(データ行を探しています)";
       console.log(`⏳ 【${acc.name}】[${batchLabel}] リクエスト日時の下の行を監視中... \n   └ 1行目(最新): ${log1}`);
     }
 
@@ -522,7 +530,7 @@ async function runLoginAndProcess(browser, acc) {
     }
 
     if (!downloadLink) {
-      throw new Error("CSVのダウンロードリンクを特定できませんでした。");
+      throw new Error("CSV of download link cannot be specified.");
     }
 
     console.log(`👉 【${acc.name}】ダウンロードを開始します...`);
@@ -543,7 +551,6 @@ async function runLoginAndProcess(browser, acc) {
     await uploadSingleFileOnly(page, acc, processed.normal.path1, '①通常版・非掲載（先）');
     await uploadSingleFileOnly(page, acc, processed.normal.path2, '②通常版・掲載（後）');
     
-    // リクエスト日時のすぐ下の行（1行目）のみを徹底監視
     await waitImportLatestSingleRow(page, acc, '通常版セット（最終行待ち）');
 
     // ====== 📦 【PV版セット投入】 ======
@@ -551,7 +558,6 @@ async function runLoginAndProcess(browser, acc) {
     await uploadSingleFileOnly(page, acc, processed.pv.path1, '③PV版・非掲載（先）');
     await uploadSingleFileOnly(page, acc, processed.pv.path2, '④PV版・掲載（後）');
     
-    // リクエスト日時のすぐ下の行（1行目）のみを徹底監視
     await waitImportLatestSingleRow(page, acc, 'PV版セット（最終行待ち）');
 
     console.log(`🎉 【${acc.name}】通常版・PV版を含む全 4 タスクの工程が正常終了しました。`);

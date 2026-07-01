@@ -335,19 +335,19 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   await targetClickBtn.click({ force: true, timeout: 15000 });
   console.log(`🚀 【${acc.name}】[${label}] クリックイベントの送信完了。`);
   
-  // 💡 【ここを修正】システム側で1件目の受付が確実に通るよう、30秒（30000ms）待機してから次へ進みます
+  // 💡 システム側で1件目の受付が確実に通るよう、30秒間（30000ms）待機してから次へ進みます
   console.log(`💤 サーバー側のバッファ確保のため、30秒間待機します...`);
   await page.waitForTimeout(30000);
 }
 
-// 🎯 リクエスト日時の直下の行（最上行・1行目）のみを徹底監視するロジック
+// 🎯 リクエスト日時の直下の行（最上行・1行目）のみを100%正確に読み取り監視するロジック
 async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 60 * 60 * 1000) {
   const start = Date.now();
   let loopCount = 1;
   let lastDataFoundTime = Date.now(); 
 
   const moveToImportHistory = async () => {
-    console.log(`🔄 【${acc.name}】[${batchLabel}] データ未検出から5分が経過しました。メニューホバーから「取込ファイル一覧」を強制再読込します...`);
+    console.log(`🔄 【${acc.name}】[${batchLabel}] 画面の応答が確認できないため、メニューホバーから「取込ファイル一覧」を強制再読込します...`);
     await navigateViaMenuOrUrl(page, acc, "取込ファイル一覧", "rec_import_histories");
     lastDataFoundTime = Date.now(); 
   };
@@ -363,14 +363,15 @@ async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 6
     let row1StatusText = "";
     let foundAnyText = false;
 
-    // リクエスト日時のすぐ下の行
+    // リクエスト日時のすぐ下の行（実データが入る最初のtr）
     const row1 = page.locator('table tr:has(td)').first();
 
     if (await row1.count() > 0) {
       const cells1 = await row1.locator('td').all();
       if (cells1.length >= 6) {
-        const status = (await cells1[4].evaluate(el => el.textContent || "")).trim();
-        const detail = (await cells1[5].evaluate(el => el.textContent || "")).trim();
+        // innerText() を使うことで、「待機中」や「進行中」のステータス・文言を確実に取得します
+        const status = (await cells1[4].innerText().catch(() => "")).trim();
+        const detail = (await cells1[5].innerText().catch(() => "")).trim();
         
         if (status || detail) {
           row1StatusText = `[${status}] ${detail}`;
@@ -402,7 +403,7 @@ async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 6
     }
     
     if (loopCount === 1 || loopCount % 6 === 0) {
-      const log1 = row1StatusText || "データ同期中";
+      const log1 = row1StatusText || "データ同期中(完全に空白)";
       console.log(`⏳ 【${acc.name}】[${batchLabel}] リクエスト日時の下の行を監視中... \n   └ 1行目(最新): ${log1}`);
     }
 

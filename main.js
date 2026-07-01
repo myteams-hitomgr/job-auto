@@ -245,7 +245,7 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
   await page.waitForTimeout(2000);
 }
 
-// 💡 修正箇所：一瞬データが空欄になるタイミングをスルーし、完全に「完了」がテキストとして表示されるまで粘り強くリロード監視するように変更
+// 💡 修正箇所：青いヘッダー行の「すぐ下のデータ1行目」を常にピンポイントでピン留めして監視するロジックに変更
 async function waitImportLatestRow(page, acc, label, timeout = 24 * 60 * 60 * 1000) {
   const start = Date.now();
   let loopCount = 1;
@@ -253,33 +253,34 @@ async function waitImportLatestRow(page, acc, label, timeout = 24 * 60 * 60 * 10
   while (true) {
     await page.waitForTimeout(5000);
 
-    const rows = await page.locator('table tr').all();
     let statusText = "";
     let detailText = "";
     let fullRowText = "";
+    let foundTargetRow = false;
 
-    for (const row of rows) {
-      const cells = await row.locator('td').all();
-      if (cells.length >= 6) { // 詳細列まで確実にあることを確認
-        const dateText = await cells[0].evaluate(el => el.textContent || "");
-        if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
-          statusText = await cells[4].evaluate(el => el.textContent || ""); 
-          detailText = await cells[5].evaluate(el => el.textContent || ""); 
-          fullRowText = await row.evaluate(el => el.innerText || "");
-          break; 
-        }
+    // 💡 tableの中で、実際にデータ(td)を持っている最初の行（＝ヘッダーのすぐ下の行）を直接ピンポイントで取得
+    const targetRow = page.locator('table tr:has(td)').first();
+    
+    if (await targetRow.count() > 0) {
+      const cells = await targetRow.locator('td').all();
+      if (cells.length >= 6) { // 日時, 完了日時, 種別, ファイル, ステータス, 詳細
+        statusText = await cells[4].evaluate(el => el.textContent || ""); 
+        detailText = await cells[5].evaluate(el => el.textContent || ""); 
+        fullRowText = await targetRow.evaluate(el => el.innerText || "");
+        foundTargetRow = true;
       }
     }
 
     const cleanStatus = statusText.trim();
     const cleanDetail = detailText.trim();
 
-    if (cleanStatus.includes('キャンセル') || cleanDetail.includes('キャンセル')) {
+    if (foundTargetRow && (cleanStatus.includes('キャンセル') || cleanDetail.includes('キャンセル'))) {
       throw new Error(`管理画面側で取込リクエストが「キャンセル」されました。`);
     }
 
-    // 💡 確定的な完了条件：ステータスが「完了」または「成功」になり、かつ詳細に「成功:」や「秒）」といった確定文字列が入っている場合のみ完了とみなす
+    // 確定的な完了条件
     const isActuallyFinished = 
+      foundTargetRow &&
       (cleanStatus === '完了' || cleanStatus === '成功') && 
       (cleanDetail.includes('成功') || cleanDetail.includes('秒') || cleanDetail.includes('件'));
 
@@ -289,9 +290,9 @@ async function waitImportLatestRow(page, acc, label, timeout = 24 * 60 * 60 * 10
       break; 
     }
     
-    // 定期ログ出力（空欄の時は「データ更新中...」としてステータス見失いを防止）
+    // 定期ログ出力
     if (loopCount === 1 || loopCount % 6 === 0) {
-      const displayStatus = cleanStatus || "データ更新中";
+      const displayStatus = cleanStatus || "データ同期中";
       const displayDetail = cleanDetail || "...";
       console.log(`⏳ 【${acc.name}】[${label}] 取込の進捗を監視中... 現在の状態: [${displayStatus}] ${displayDetail}`);
     }
@@ -302,6 +303,7 @@ async function waitImportLatestRow(page, acc, label, timeout = 24 * 60 * 60 * 10
 
     loopCount++;
     
+    // 画面を再読み込みして最新化
     await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
   }
 }

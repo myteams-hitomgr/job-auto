@@ -245,7 +245,7 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
   await page.waitForTimeout(2000);
 }
 
-// 💡 変更箇所：制限時間を24時間（24 * 60 * 60 * 1000 ミリ秒）に変更しました
+// 💡 修正箇所：進行中の「〇〇/3990件」での誤判定を防ぎ、確実に完了・成功（または処理時間表記）するまで待つように変更しました
 async function waitImportLatestRow(page, acc, label, timeout = 24 * 60 * 60 * 1000) {
   const start = Date.now();
   let loopCount = 1;
@@ -275,7 +275,15 @@ async function waitImportLatestRow(page, acc, label, timeout = 24 * 60 * 60 * 10
       throw new Error(`管理画面側で取込リクエストが「キャンセル」されました。`);
     }
 
-    if (statusText.includes('完了') || statusText.includes('成功') || detailText.includes('件')) {
+    // 💡 修正判定：進行中の「〇〇/〇〇件」ではなく、ステータスか詳細に「完了」「成功」、あるいは「（〇分〇秒）」のような確定表記が出た時だけを対象にします
+    const isActuallyFinished = 
+      statusText.includes('完了') || 
+      statusText.includes('成功') || 
+      detailText.includes('成功') || 
+      /（\s*\d+\s*分\s*\d+\s*秒\s*）/.test(detailText) ||
+      /\(\s*\d+m\s*\d+s\s*\)/.test(detailText);
+
+    if (isActuallyFinished) {
       console.log(`✅ 【${acc.name}】[${label}] 取込ファイル一覧の最新行（1行目）で処理完了を確認しました！`);
       console.log(`📄 完了行情報: ${fullRowText.trim().replace(/\s+/g, ' ')}`);
       break; 

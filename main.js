@@ -338,108 +338,8 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   await page.waitForTimeout(30000);
 }
 
-// 🎯 【ここだけ修正】「リクエスト日時」ヘッダーの真下にあるデータ行だけを狙い撃ちして監視（メイン&iframe両対応）
-async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 60 * 60 * 1000) {
-  const start = Date.now();
-  let loopCount = 1;
-  let lastDataFoundTime = Date.now(); 
-
-  const moveToImportHistory = async () => {
-    console.log(`🔄 【${acc.name}】[${batchLabel}] 画面の応答が確認できないため、メニューホバーから「取込ファイル一覧」を強制再読込します...`);
-    await navigateViaMenuOrUrl(page, acc, "取込ファイル一覧", "rec_import_histories");
-    lastDataFoundTime = Date.now(); 
-  };
-
-  console.log(`👉 【${acc.name}】[${batchLabel}] 上部メニューの矢印ボタンにマウスを乗せ、「取込ファイル一覧」へ移動します...`);
-  await navigateViaMenuOrUrl(page, acc, "取込ファイル一覧", "rec_import_histories");
-  console.log(`📄 【${acc.name}】[${batchLabel}] 監視を開始。「リクエスト日時」ヘッダーの真下の行の進捗を見守ります。`);
-
-  while (true) {
-    await page.waitForTimeout(5000);
-
-    let row1Finished = false;
-    let row1StatusText = "";
-    let foundTargetRow = false;
-
-    // 💡 メイン画面とすべてのiframe枠を巡回して探す
-    const contexts = [page, ...page.frames()];
-    
-    for (const ctx of contexts) {
-      try {
-        // 1. テーブルのヘッダーから「リクエスト日時」セルを検索
-        const headerCell = ctx.locator('th:has-text("リクエスト日時"), td:has-text("リクエスト日時")').first();
-        
-        if (await headerCell.count() > 0 && await headerCell.isVisible()) {
-          // 2. 「リクエスト日時」を持つ行(tr)を取得
-          const headerRow = ctx.locator('tr:has(th:has-text("リクエスト日時")), tr:has(td:has-text("リクエスト日時"))').first();
-          
-          // 3. その行のすぐ次にあるデータ行（+ tr）をピンポイント指定
-          const targetRow = headerRow.locator('+ tr');
-          
-          if (await targetRow.count() > 0) {
-            const cells = await targetRow.locator('td').all();
-            
-            if (cells.length >= 6) {
-              const dateText = (await cells[0].innerText().catch(() => "")).trim();
-              
-              // 有効な日付が入っているか確認
-              if (dateText.includes('/') || dateText.includes(':')) {
-                const status = (await cells[4].innerText().catch(() => "")).trim();
-                const detail = (await cells[5].innerText().catch(() => "")).trim();
-                
-                if (status || detail) {
-                  row1StatusText = `[${status}] ${detail}`;
-                  foundTargetRow = true;
-                }
-
-                if (status.includes('キャンセル') || detail.includes('キャンセル')) {
-                  throw new Error(`管理画面側で取込リクエストが「キャンセル」されました。`);
-                }
-                
-                // ステータスが完了または成功であれば完了フラグを立てる
-                if (status === '完了' || status === '成功') {
-                  row1Finished = true;
-                }
-                
-                break; // 正しいターゲット行を特定できたので走査終了
-              }
-            }
-          }
-        }
-      } catch (err) {
-        // エラーは無視してループ継続
-      }
-    }
-
-    if (foundTargetRow) {
-      lastDataFoundTime = Date.now();
-    } else {
-      if (Date.now() - lastDataFoundTime > 5 * 60 * 1000) {
-        await moveToImportHistory();
-        continue; 
-      }
-    }
-
-    if (row1Finished) {
-      console.log(`✅ 【${acc.name}】[${batchLabel}] 「リクエスト日時」の真下の行が「${row1StatusText}」になったため、正常終了します。`);
-      break;
-    }
-    
-    if (loopCount === 1 || loopCount % 6 === 0) {
-      const log1 = row1StatusText || "データ同期中(ターゲット行をスキャンしています)";
-      console.log(`⏳ 【${acc.name}】[${batchLabel}] リクエスト日時の真下の行を監視中... \n    └ 最新データ行: ${log1}`);
-    }
-
-    if (Date.now() - start > timeout) {
-      throw new Error(`取込処理がタイムアウト（${timeout / 60000}分）しました。`);
-    }
-
-    loopCount++;
-    await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
-  }
-}
-
-async function runLoginAndProcess(browser, acc) {
+// 🌐 ログインから最新RAWデータの生成・ダウンロード、加工までを担当する独立した共通関数
+async function downloadAndPrepareCSV(browser, acc) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   page.setDefaultTimeout(0); 
@@ -474,7 +374,6 @@ async function runLoginAndProcess(browser, acc) {
 
     while (true) {
       await page.waitForTimeout(5000);
-
       const rows = await page.locator('table tr').all();
       let statusText = "";
       let detailText = "";
@@ -503,25 +402,20 @@ async function runLoginAndProcess(browser, acc) {
       if (loopCount === 1 || loopCount % 6 === 0) {
         const displayStatus = statusText.trim() || "読み込み中";
         let displayDetail = detailText.trim() || "...";
-        
         const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
         if (match) {
           const currentCount = parseInt(match[1], 10);
           const totalCount = parseInt(match[2], 10);
-          
           if (currentCount > 0 && totalCount > 0) {
             const elapsed = (Date.now() - watchStartTime) / 1000;
             const percent = ((currentCount / totalCount) * 100).toFixed(1);
             const estimatedTotalTime = (elapsed / currentCount) * totalCount;
             const remaining = Math.max(0, estimatedTotalTime - elapsed);
-            
             const rMin = Math.floor(remaining / 60);
             const rSec = Math.floor(remaining % 60);
-            
             displayDetail = `${currentCount}/${totalCount}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
           }
         }
-        
         console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${displayStatus}] ${displayDetail}`);
       }
       loopCount++;
@@ -532,7 +426,6 @@ async function runLoginAndProcess(browser, acc) {
     
     const finalRows = await page.locator('table tr').all();
     let downloadLink = null;
-    
     for (const row of finalRows) {
       const cells = await row.locator('td').all();
       if (cells.length >= 4) {
@@ -561,48 +454,92 @@ async function runLoginAndProcess(browser, acc) {
     const processed = processCSVFile(downloadPath, acc.name);
     if (!processed) throw new Error("CSVデータの加工に失敗しました。");
 
-    // ====== 📦 【通常版セット投入】 ======
-    console.log(`📦 【${acc.name}】[通常版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
-    await uploadSingleFileOnly(page, acc, processed.normal.path1, '①通常版・非掲載（先）');
-    await uploadSingleFileOnly(page, acc, processed.normal.path2, '②通常版・掲載（後）');
-    
-    await waitImportLatestSingleRow(page, acc, '通常版セット（最終行待ち）');
-
-    // ====== 📦 【PV版セット投入】 ======
-    console.log(`📦 【${acc.name}】[PV版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
-    await uploadSingleFileOnly(page, acc, processed.pv.path1, '③PV版・非掲載（先）');
-    await uploadSingleFileOnly(page, acc, processed.pv.path2, '④PV版・掲載（後）');
-    
-    await waitImportLatestSingleRow(page, acc, 'PV版セット（最終行待ち）');
-
-    console.log(`🎉 【${acc.name}】通常版・PV版を含む全 4 タスクの工程が正常終了しました。`);
-
+    return { page, context, processed };
   } catch (error) {
-    console.log(`⚠️ 【${acc.name}】処理中にエラーが発生: ${error.message}`);
-    await page.screenshot({ path: `error_${acc.name}.png`, fullPage: true });
-  } finally {
-    await context.close(); 
+    console.log(`⚠️ 【${acc.name}】準備処理中にエラーが発生: ${error.message}`);
+    await page.screenshot({ path: `error_prepare_${acc.name}.png`, fullPage: true });
+    await context.close();
+    throw error;
   }
 }
 
+// 📦 【通常版セットのアップロード処理】（※取込監視を削除）
+async function executeNormalSet(page, acc, processed) {
+  console.log(`📦 【${acc.name}】[通常版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
+  await uploadSingleFileOnly(page, acc, processed.normal.path1, '①通常版・非掲載（先）');
+  await uploadSingleFileOnly(page, acc, processed.normal.path2, '②通常版・掲載（後）');
+  console.log(`🎉 【${acc.name}】通常版2ファイルのアップロード処理を送信しました。`);
+}
+
+// 📦 【PV版セットのアップロード処理】（※取込監視を削除）
+async function executePvSet(page, acc, processed) {
+  console.log(`📦 【${acc.name}】[PV版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
+  await uploadSingleFileOnly(page, acc, processed.pv.path1, '③PV版・非掲載（先）');
+  await uploadSingleFileOnly(page, acc, processed.pv.path2, '④PV版・掲載（後）');
+  console.log(`🎉 【${acc.name}】PV版2ファイルのアップロード処理を送信しました。`);
+}
+
+// ⏳ 3時間の待機（カウントダウン付きログ出力）
+async function waitThreeHours(label) {
+  const threeHoursMs = 3 * 60 * 60 * 1000;
+  console.log(`💤 次のタスク「${label}」に備え、ここから 【3時間】 の待機インターバルに入ります...`);
+  
+  // 30分ごとに進捗をコンソールへ表示
+  const intervalMs = 30 * 60 * 1000;
+  let elapsed = 0;
+  
+  while (elapsed < threeHoursMs) {
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    elapsed += intervalMs;
+    const remainingMin = (threeHoursMs - elapsed) / (60 * 1000);
+    console.log(`⏳ 【インターバル経過状況】 残り約 ${Math.round(remainingMin)} 分 （次の開始対象: ${label}）`);
+  }
+}
+
+// 🏁 メイン実行ループ制御ロジック
 (async () => {
   const browser = await chromium.launch();
-  console.log("🏁 4大タスク一括・交互連続ループを開始します。(停止は Ctrl+C)");
+  console.log("🏁 3時間ローテーションの交互連続ループを開始します。(停止は Ctrl+C)");
   
   while (true) {
     for (const acc of accounts) {
-      console.log(`🚀 ==========================================`);
-      console.log(`🚀 アカウント【${acc.name}】通常・PV（計4タスク）を開始`);
-      console.log(`🚀 ==========================================`);
-      
+      const nextAcc = accounts.find(a => a.name !== acc.name);
+
+      // ==========================================
+      // STEP 1: アカウントの【通常セット】
+      // ==========================================
       try {
-        await runLoginAndProcess(browser, acc);
+        console.log(`🚀 ==========================================`);
+        console.log(`🚀 アカウント【${acc.name}】通常セットを開始します`);
+        console.log(`🚀 ==========================================`);
+        
+        const result = await downloadAndPrepareCSV(browser, acc);
+        await executeNormalSet(result.page, acc, result.processed);
+        await result.context.close(); // 即座にブラウザをクローズ
       } catch (err) {
-        console.log(`⚠️ アカウント【${acc.name}】で例外エラー。次のアカウントへリレーします。`);
+        console.log(`⚠️ アカウント【${acc.name}】通常セットで例外エラー。スキップして時間調整に進みます。: ${err.message}`);
       }
-      
-      console.log(`💤 セッション競合防止のため、30秒間のインターバルを挟みます...`);
-      await new Promise(resolve => setTimeout(resolve, 30000));
+
+      // 3時間待機してから、同じアカウントのPVセットへ
+      await waitThreeHours(`アカウント【${acc.name}】のPVセット`);
+
+      // ==========================================
+      // STEP 2: アカウントの【PVセット】
+      // ==========================================
+      try {
+        console.log(`🚀 ==========================================`);
+        console.log(`🚀 アカウント【${acc.name}】PVセットを開始します`);
+        console.log(`🚀 ==========================================`);
+        
+        const result = await downloadAndPrepareCSV(browser, acc);
+        await executePvSet(result.page, acc, result.processed);
+        await result.context.close(); // 即座にブラウザをクローズ
+      } catch (err) {
+        console.log(`⚠️ アカウント【${acc.name}】PVセットで例外エラー。スキップして時間調整に進みます。: ${err.message}`);
+      }
+
+      // 3時間待機してから、もう一方のアカウントの通常セットへ
+      await waitThreeHours(`もう一つのアカウント【${nextAcc.name}】の通常セット`);
     }
   }
 })();

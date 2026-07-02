@@ -338,7 +338,7 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   await page.waitForTimeout(30000);
 }
 
-// 🎯 本物のデータ行（日付が入っている最初の行）だけをピンポイントに狙い撃ちして監視するロジック
+// 🎯 メイン画面およびiframe（子画面枠）の全トレイから本物の履歴行を探し出して正確に監視するロジック
 async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 60 * 60 * 1000) {
   const start = Date.now();
   let loopCount = 1;
@@ -361,23 +361,36 @@ async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 6
     let row1StatusText = "";
     let foundAnyText = false;
 
-    // 💡 画面上のすべての tr をスキャンし、本物のデータ行を探し出します
-    const allRows = await page.locator('table tr').all();
+    // 💡 1. メイン画面内の tr 要素をすべて集める
+    let allRows = await page.locator('table tr').all();
+
+    // 💡 2. メイン画面で見つからなければ、画面内にある全ての iframe（子ウィンドウ）の中身も集める
+    if (allRows.length === 0 || loopCount === 1) {
+      const frames = page.frames();
+      for (const frame of frames) {
+        const frameRows = await frame.locator('table tr').all();
+        if (frameRows.length > 0) {
+          allRows = allRows.concat(frameRows);
+        }
+      }
+    }
+
     let targetRowCells = null;
 
+    // 💡 3. 集めたすべての行から「日付」が入っている本物のデータ行を特定する
     for (const row of allRows) {
       const cells = await row.locator('td').all();
       if (cells.length >= 6) {
-        // 1番目のセル（リクエスト日時）に日付形式（/や:）が含まれているかチェック
         const dateText = (await cells[0].innerText().catch(() => "")).trim();
-        if (dateText.includes('/') || dateText.includes(':')) {
-          targetRowCells = cells; // これが最新の1行目データ
+        // 日付形式が含まれていれば、それが一番最新の本物データ行
+        if (dateText.includes('/') || dateText.includes(':') || dateText.includes('2026')) {
+          targetRowCells = cells; 
           break; 
         }
       }
     }
 
-    // 本物のデータ行が特定できたら状態を取得
+    // 本物のデータ行からステータスと詳細を取得
     if (targetRowCells) {
       const status = (await targetRowCells[4].innerText().catch(() => "")).trim();
       const detail = (await targetRowCells[5].innerText().catch(() => "")).trim();
@@ -411,7 +424,7 @@ async function waitImportLatestSingleRow(page, acc, batchLabel, timeout = 24 * 6
     }
     
     if (loopCount === 1 || loopCount % 6 === 0) {
-      const log1 = row1StatusText || "データ同期中(データ行を探しています)";
+      const log1 = row1StatusText || "データ同期中(枠内テーブルをスキャンしています)";
       console.log(`⏳ 【${acc.name}】[${batchLabel}] リクエスト日時の下の行を監視中... \n   └ 1行目(最新): ${log1}`);
     }
 
@@ -460,7 +473,14 @@ async function runLoginAndProcess(browser, acc) {
     while (true) {
       await page.waitForTimeout(5000);
 
-      const rows = await page.locator('table tr').all();
+      // 取出ファイル一覧側も念のため iframe 内の tr をマージして見に行けるように強化
+      let rows = await page.locator('table tr').all();
+      const frames = page.frames();
+      for (const frame of frames) {
+        const frameRows = await frame.locator('table tr').all();
+        if (frameRows.length > 0) rows = rows.concat(frameRows);
+      }
+
       let statusText = "";
       let detailText = "";
 
@@ -515,9 +535,13 @@ async function runLoginAndProcess(browser, acc) {
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    const finalRows = await page.locator('table tr').all();
+    let finalRows = await page.locator('table tr').all();
+    for (const frame of page.frames()) {
+      const frameRows = await frame.locator('table tr').all();
+      if (frameRows.length > 0) finalRows = finalRows.concat(frameRows);
+    }
+
     let downloadLink = null;
-    
     for (const row of finalRows) {
       const cells = await row.locator('td').all();
       if (cells.length >= 4) {
@@ -530,7 +554,7 @@ async function runLoginAndProcess(browser, acc) {
     }
 
     if (!downloadLink) {
-      throw new Error("CSV of download link cannot be specified.");
+      throw new Error("CSV download link could not be found.");
     }
 
     console.log(`👉 【${acc.name}】ダウンロードを開始します...`);

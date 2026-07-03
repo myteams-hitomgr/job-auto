@@ -465,7 +465,7 @@ async function downloadAndPrepareCSV(browser, acc) {
 async function executeNormalSet(page, acc, processed) {
   console.log(`📦 【${acc.name}】[通常版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
   await uploadSingleFileOnly(page, acc, processed.normal.path1, '①通常版・非掲載（先）');
-  await uploadSingleFileOnly(page, acc, processed.normal.path2, '②通常版・掲載（後）');
+  await uploadSingleFileOnly(page, git acc, processed.normal.path2, '②通常版・掲載（後）');
   console.log(`🎉 【${acc.name}】通常版2ファイルのアップロード処理を送信しました。`);
 }
 
@@ -476,67 +476,66 @@ async function executePvSet(page, acc, processed) {
   console.log(`🎉 【${acc.name}】PV版2ファイルのアップロード処理を送信しました。`);
 }
 
-// ⏳ 6時間の待機（カウントダウン付きログ出力）へ変更
-async function waitSixHours(label) {
-  const sixHoursMs = 6 * 60 * 60 * 1000; // 3時間から6時間 (6 * 60分 * 60秒 * 1000ミリ秒) に変更
-  console.log(`💤 次のタスク「${label}」に備え、ここから 【6時間】 の待機インターバルに入ります...`);
-  
-  // 30分ごとに進捗をコンソールへ表示
-  const intervalMs = 30 * 60 * 1000;
-  let elapsed = 0;
-  
-  while (elapsed < sixHoursMs) {
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
-    elapsed += intervalMs;
-    const remainingMin = (sixHoursMs - elapsed) / (60 * 1000);
-    console.log(`⏳ 【インターバル経過状況】 残り約 ${Math.round(remainingMin)} 分 （次の開始対象: ${label}）`);
-  }
-}
-
-// 🏁 メイン実行ループ制御ロジック
+// 🏁 時間ベースで起動するメイン制御ロジック
 (async () => {
-  const browser = await chromium.launch();
-  console.log("🏁 6時間ローテーションの交互連続ループを開始します。(停止は Ctrl+C)");
+  // 現在の世界標準時（UTC）の「時間」を取得
+  const utcHour = new Date().getUTCHours();
   
-  while (true) {
-    for (const acc of accounts) {
-      const nextAcc = accounts.find(a => a.name !== acc.name);
+  let currentState = '';
+  
+  // スケジュール時間(UTC)と対応するタスクの判定 (前後1時間の猶予を持たせて捕捉)
+  if (utcHour >= 23 || utcHour <= 1) {
+    currentState = 'A_NORMAL'; // 日本時間 9:00頃
+  } else if (utcHour >= 5 && utcHour <= 7) {
+    currentState = 'A_PV';     // 日本時間 15:00頃
+  } else if (utcHour >= 11 && utcHour <= 13) {
+    currentState = 'B_NORMAL'; // 日本時間 21:00頃
+  } else if (utcHour >= 17 && utcHour <= 19) {
+    currentState = 'B_PV';     // 日本時間 3:00頃
+  } else {
+    // 手動起動(workflow_dispatch)などの場合は、現在の時間から一番近いものを安全に割り当て
+    if (utcHour >= 2 && utcHour < 5) currentState = 'A_NORMAL';
+    else if (utcHour >= 8 && utcHour < 11) currentState = 'A_PV';
+    else if (utcHour >= 14 && utcHour < 17) currentState = 'B_NORMAL';
+    else currentState = 'B_PV';
+  }
 
-      // ==========================================
-      // STEP 1: アカウントの【通常セット】
-      // ==========================================
-      try {
-        console.log(`🚀 ==========================================`);
-        console.log(`🚀 アカウント【${acc.name}】通常セットを開始します`);
-        console.log(`🚀 ==========================================`);
-        
-        const result = await downloadAndPrepareCSV(browser, acc);
-        await executeNormalSet(result.page, acc, result.processed);
-        await result.context.close(); // 即座にブラウザをクローズ
-      } catch (err) {
-        console.log(`⚠️ アカウント【${acc.name}】通常セットで例外エラー。スキップして時間調整に進みます。: ${err.message}`);
-      }
+  console.log(`🤖 起動時刻(UTC): ${utcHour}時 -> 今回の自動割り当てタスク: 【${currentState}】`);
 
-      // 6時間待機してから、同じアカウントのPVセットへ
-      await waitSixHours(`アカウント【${acc.name}】のPVセット`);
-
-      // ==========================================
-      // STEP 2: アカウントの【PVセット】
-      // ==========================================
-      try {
-        console.log(`🚀 ==========================================`);
-        console.log(`🚀 アカウント【${acc.name}】PVセットを開始します`);
-        console.log(`🚀 ==========================================`);
-        
-        const result = await downloadAndPrepareCSV(browser, acc);
-        await executePvSet(result.page, acc, result.processed);
-        await result.context.close(); // 即座にブラウザをクローズ
-      } catch (err) {
-        console.log(`⚠️ アカウント【${acc.name}】PVセットで例外エラー。スキップして時間調整に進みます。: ${err.message}`);
-      }
-
-      // 6時間待機してから、もう一方のアカウントの通常セットへ
-      await waitSixHours(`もう一つのアカウント【${nextAcc.name}】の通常セット`);
+  const browser = await chromium.launch();
+  
+  try {
+    if (currentState === 'A_NORMAL') {
+      const acc = accounts.find(a => a.name === 'A');
+      const result = await downloadAndPrepareCSV(browser, acc);
+      await executeNormalSet(result.page, acc, result.processed);
+      await result.context.close();
+    } 
+    else if (currentState === 'A_PV') {
+      const acc = accounts.find(a => a.name === 'A');
+      const result = await downloadAndPrepareCSV(browser, acc);
+      await executePvSet(result.page, acc, result.processed);
+      await result.context.close();
+    } 
+    else if (currentState === 'B_NORMAL') {
+      const acc = accounts.find(a => a.name === 'B');
+      const result = await downloadAndPrepareCSV(browser, acc);
+      await executeNormalSet(result.page, acc, result.processed);
+      await result.context.close();
+    } 
+    else if (currentState === 'B_PV') {
+      const acc = accounts.find(a => a.name === 'B');
+      const result = await downloadAndPrepareCSV(browser, acc);
+      await executePvSet(result.page, acc, result.processed);
+      await result.context.close();
     }
+    
+    console.log(`🏁 【${currentState}】の処理が正常に完了しました。`);
+
+  } catch (err) {
+    console.log(`❌ エラーが発生しました。次回のスケジュール枠で再試行されます。: ${err.message}`);
+    process.exit(1);
+  } finally {
+    await browser.close();
   }
 })();

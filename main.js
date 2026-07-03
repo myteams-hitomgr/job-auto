@@ -283,7 +283,7 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
     console.log(`⚠️ 【${acc.name}】[${label}] inputが見つかりません。直接クリックを試みます...`);
     const customUploadBtn = page.locator('text=ファイルを選択, text=ファイル選択, button:has-text("選択"), .file-upload, .upload-area').first();
     if (await customUploadBtn.count() > 0) {
-      await customUploadBtn.click({ force: true }).catch(() => {});
+      customUploadBtn.click({ force: true }).catch(() => {});
     }
     const retryInput = page.locator('input[type="file"]').first();
     if (await retryInput.count() > 0) {
@@ -338,7 +338,6 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   await page.waitForTimeout(30000);
 }
 
-// 🌐 ログインから最新RAWデータの生成・ダウンロード、加工までを担当する独立した共通関数
 async function downloadAndPrepareCSV(browser, acc) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
@@ -463,7 +462,6 @@ async function downloadAndPrepareCSV(browser, acc) {
   }
 }
 
-// 📦 【通常版セットのアップロード処理】（※取込監視を削除）
 async function executeNormalSet(page, acc, processed) {
   console.log(`📦 【${acc.name}】[通常版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
   await uploadSingleFileOnly(page, acc, processed.normal.path1, '①通常版・非掲載（先）');
@@ -471,7 +469,6 @@ async function executeNormalSet(page, acc, processed) {
   console.log(`🎉 【${acc.name}】通常版2ファイルのアップロード処理を送信しました。`);
 }
 
-// 📦 【PV版セットのアップロード処理】（※取込監視を削除）
 async function executePvSet(page, acc, processed) {
   console.log(`📦 【${acc.name}】[PV版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
   await uploadSingleFileOnly(page, acc, processed.pv.path1, '③PV版・非掲載（先）');
@@ -479,19 +476,19 @@ async function executePvSet(page, acc, processed) {
   console.log(`🎉 【${acc.name}】PV版2ファイルのアップロード処理を送信しました。`);
 }
 
-// ⏳ 3時間の待機（カウントダウン付きログ出力）
-async function waitThreeHours(label) {
-  const threeHoursMs = 3 * 60 * 60 * 1000;
-  console.log(`💤 次のタスク「${label}」に備え、ここから 【3時間】 の待機インターバルに入ります...`);
+// ⏳ 6時間の待機（カウントダウン付きログ出力）へ変更
+async function waitSixHours(label) {
+  const sixHoursMs = 6 * 60 * 60 * 1000; // 3時間から6時間 (6 * 60分 * 60秒 * 1000ミリ秒) に変更
+  console.log(`💤 次のタスク「${label}」に備え、ここから 【6時間】 の待機インターバルに入ります...`);
   
   // 30分ごとに進捗をコンソールへ表示
   const intervalMs = 30 * 60 * 1000;
   let elapsed = 0;
   
-  while (elapsed < threeHoursMs) {
+  while (elapsed < sixHoursMs) {
     await new Promise(resolve => setTimeout(resolve, intervalMs));
     elapsed += intervalMs;
-    const remainingMin = (threeHoursMs - elapsed) / (60 * 1000);
+    const remainingMin = (sixHoursMs - elapsed) / (60 * 1000);
     console.log(`⏳ 【インターバル経過状況】 残り約 ${Math.round(remainingMin)} 分 （次の開始対象: ${label}）`);
   }
 }
@@ -499,7 +496,7 @@ async function waitThreeHours(label) {
 // 🏁 メイン実行ループ制御ロジック
 (async () => {
   const browser = await chromium.launch();
-  console.log("🏁 3時間ローテーションの交互連続ループを開始します。(停止は Ctrl+C)");
+  console.log("🏁 6時間ローテーションの交互連続ループを開始します。(停止は Ctrl+C)");
   
   while (true) {
     for (const acc of accounts) {
@@ -520,8 +517,8 @@ async function waitThreeHours(label) {
         console.log(`⚠️ アカウント【${acc.name}】通常セットで例外エラー。スキップして時間調整に進みます。: ${err.message}`);
       }
 
-      // 3時間待機してから、同じアカウントのPVセットへ
-      await waitThreeHours(`アカウント【${acc.name}】のPVセット`);
+      // 6時間待機してから、同じアカウントのPVセットへ
+      await waitSixHours(`アカウント【${acc.name}】のPVセット`);
 
       // ==========================================
       // STEP 2: アカウントの【PVセット】
@@ -538,8 +535,8 @@ async function waitThreeHours(label) {
         console.log(`⚠️ アカウント【${acc.name}】PVセットで例外エラー。スキップして時間調整に進みます。: ${err.message}`);
       }
 
-      // 3時間待機してから、もう一方のアカウントの通常セットへ
-      await waitThreeHours(`もう一つのアカウント【${nextAcc.name}】の通常セット`);
+      // 6時間待機してから、もう一方のアカウントの通常セットへ
+      await waitSixHours(`もう一つのアカウント【${nextAcc.name}】の通常セット`);
     }
   }
 })();

@@ -465,7 +465,7 @@ async function downloadAndPrepareCSV(browser, acc) {
 async function executeNormalSet(page, acc, processed) {
   console.log(`📦 【${acc.name}】[通常版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
   await uploadSingleFileOnly(page, acc, processed.normal.path1, '①通常版・非掲載（先）');
-  await uploadSingleFileOnly(page, git acc, processed.normal.path2, '②通常版・掲載（後）');
+  await uploadSingleFileOnly(page, acc, processed.normal.path2, '②通常版・掲載（後）'); // 補正完了
   console.log(`🎉 【${acc.name}】通常版2ファイルのアップロード処理を送信しました。`);
 }
 
@@ -478,22 +478,18 @@ async function executePvSet(page, acc, processed) {
 
 // 🏁 時間ベースで起動するメイン制御ロジック
 (async () => {
-  // 現在の世界標準時（UTC）の「時間」を取得
   const utcHour = new Date().getUTCHours();
-  
   let currentState = '';
   
-  // スケジュール時間(UTC)と対応するタスクの判定 (前後1時間の猶予を持たせて捕捉)
   if (utcHour >= 23 || utcHour <= 1) {
-    currentState = 'A_NORMAL'; // 日本時間 9:00頃
+    currentState = 'A_NORMAL';
   } else if (utcHour >= 5 && utcHour <= 7) {
-    currentState = 'A_PV';     // 日本時間 15:00頃
+    currentState = 'A_PV';
   } else if (utcHour >= 11 && utcHour <= 13) {
-    currentState = 'B_NORMAL'; // 日本時間 21:00頃
+    currentState = 'B_NORMAL';
   } else if (utcHour >= 17 && utcHour <= 19) {
-    currentState = 'B_PV';     // 日本時間 3:00頃
+    currentState = 'B_PV';
   } else {
-    // 手動起動(workflow_dispatch)などの場合は、現在の時間から一番近いものを安全に割り当て
     if (utcHour >= 2 && utcHour < 5) currentState = 'A_NORMAL';
     else if (utcHour >= 8 && utcHour < 11) currentState = 'A_PV';
     else if (utcHour >= 14 && utcHour < 17) currentState = 'B_NORMAL';

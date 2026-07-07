@@ -1,8 +1,13 @@
 name: Job Automation Run
 
+permissions:
+  contents: write
+
 on:
-  # 手動で実行したい場合、または定期実行（必要に応じて設定してください）
   workflow_dispatch:
+
+  schedule:
+    - cron: '0 */6 * * *'
 
 jobs:
   run-bot:
@@ -31,4 +36,10 @@ jobs:
           HITOMGR_ID_M003: ${{ secrets.HITOMGR_ID_M003 }}
           HITOMGR_PASSWORD_PASSU003: ${{ secrets.HITOMGR_PASSWORD_PASSU003 }}
           HITOMGR_ID_U003: ${{ secrets.HITOMGR_ID_U003 }}
-        run: node main.js
+              - name: Save counter
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add counter.json
+          git commit -m "update counter" || exit 0
+          git push

@@ -478,60 +478,134 @@ async function executePvSet(page, acc, processed) {
 
 // 🏁 時間ベースで起動するメイン制御ロジック
 (async () => {
+
   const utcHour = new Date().getUTCHours();
   let currentState = '';
-  
-  if (utcHour >= 23 || utcHour <= 1) {
+
+  // 6時間ごとの固定ローテーション
+  // GitHub Actions cron: 0 */6 * * *
+  //
+  // UTC 00:00 → A_NORMAL
+  // UTC 06:00 → A_PV
+  // UTC 12:00 → B_NORMAL
+  // UTC 18:00 → B_PV
+
+  if (utcHour >= 0 && utcHour < 6) {
+
     currentState = 'A_NORMAL';
-  } else if (utcHour >= 5 && utcHour <= 7) {
+
+  } else if (utcHour >= 6 && utcHour < 12) {
+
     currentState = 'A_PV';
-  } else if (utcHour >= 11 && utcHour <= 13) {
+
+  } else if (utcHour >= 12 && utcHour < 18) {
+
     currentState = 'B_NORMAL';
-  } else if (utcHour >= 17 && utcHour <= 19) {
-    currentState = 'B_PV';
+
   } else {
-    if (utcHour >= 2 && utcHour < 5) currentState = 'A_NORMAL';
-    else if (utcHour >= 8 && utcHour < 11) currentState = 'A_PV';
-    else if (utcHour >= 14 && utcHour < 17) currentState = 'B_NORMAL';
-    else currentState = 'B_PV';
+
+    currentState = 'B_PV';
+
   }
 
-  console.log(`🤖 起動時刻(UTC): ${utcHour}時 -> 今回の自動割り当てタスク: 【${currentState}】`);
 
-  const browser = await chromium.launch();
-  
+  console.log(
+    `🤖 起動時刻(UTC): ${utcHour}時 -> 今回の自動割り当てタスク: 【${currentState}】`
+  );
+
+
+  const browser = await chromium.launch({
+    headless: true
+  });
+
+
   try {
+
     if (currentState === 'A_NORMAL') {
+
       const acc = accounts.find(a => a.name === 'A');
+
       const result = await downloadAndPrepareCSV(browser, acc);
-      await executeNormalSet(result.page, acc, result.processed);
+
+      await executeNormalSet(
+        result.page,
+        acc,
+        result.processed
+      );
+
       await result.context.close();
-    } 
-    else if (currentState === 'A_PV') {
+
+
+    } else if (currentState === 'A_PV') {
+
       const acc = accounts.find(a => a.name === 'A');
+
       const result = await downloadAndPrepareCSV(browser, acc);
-      await executePvSet(result.page, acc, result.processed);
+
+      await executePvSet(
+        result.page,
+        acc,
+        result.processed
+      );
+
       await result.context.close();
-    } 
-    else if (currentState === 'B_NORMAL') {
+
+
+    } else if (currentState === 'B_NORMAL') {
+
       const acc = accounts.find(a => a.name === 'B');
+
       const result = await downloadAndPrepareCSV(browser, acc);
-      await executeNormalSet(result.page, acc, result.processed);
+
+      await executeNormalSet(
+        result.page,
+        acc,
+        result.processed
+      );
+
       await result.context.close();
-    } 
-    else if (currentState === 'B_PV') {
+
+
+    } else if (currentState === 'B_PV') {
+
       const acc = accounts.find(a => a.name === 'B');
+
       const result = await downloadAndPrepareCSV(browser, acc);
-      await executePvSet(result.page, acc, result.processed);
+
+      await executePvSet(
+        result.page,
+        acc,
+        result.processed
+      );
+
       await result.context.close();
+
     }
-    
-    console.log(`🏁 【${currentState}】の処理が正常に完了しました。`);
+
+
+    console.log(
+      `🏁 【${currentState}】の処理が正常に完了しました。`
+    );
+
 
   } catch (err) {
-    console.log(`❌ エラーが発生しました。次回のスケジュール枠で再試行されます。: ${err.message}`);
+
+
+    console.log(
+      `❌ エラーが発生しました。次回のスケジュール枠で再試行されます。: ${err.message}`
+    );
+
+
     process.exit(1);
+
+
   } finally {
+
+
     await browser.close();
+
+
   }
+
+
 })();

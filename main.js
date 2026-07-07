@@ -476,41 +476,65 @@ async function executePvSet(page, acc, processed) {
   console.log(`🎉 【${acc.name}】PV版2ファイルのアップロード処理を送信しました。`);
 }
 
-// 🏁 時間ベースで起動するメイン制御ロジック
+// 🏁 起動回数ベース永久ローテーション制御
 (async () => {
 
-  const utcHour = new Date().getUTCHours();
-  let currentState = '';
+  const counterPath = path.join(__dirname, 'counter.json');
 
-  // 6時間ごとの固定ローテーション
-  // GitHub Actions cron: 0 */6 * * *
-  //
-  // UTC 00:00 → A_NORMAL
-  // UTC 06:00 → A_PV
-  // UTC 12:00 → B_NORMAL
-  // UTC 18:00 → B_PV
+  let counterData = {
+    count: 0
+  };
 
-  if (utcHour >= 0 && utcHour < 6) {
-
-    currentState = 'A_NORMAL';
-
-  } else if (utcHour >= 6 && utcHour < 12) {
-
-    currentState = 'A_PV';
-
-  } else if (utcHour >= 12 && utcHour < 18) {
-
-    currentState = 'B_NORMAL';
-
-  } else {
-
-    currentState = 'B_PV';
-
+  // カウンター読み込み
+  try {
+    if (fs.existsSync(counterPath)) {
+      counterData = JSON.parse(
+        fs.readFileSync(counterPath, 'utf8')
+      );
+    }
+  } catch (e) {
+    console.log(
+      '⚠️ counter.json読み込み失敗。0から開始します。'
+    );
+    counterData = {
+      count: 0
+    };
   }
 
 
+  const rotation = [
+    'A_NORMAL',
+    'A_PV',
+    'B_NORMAL',
+    'B_PV'
+  ];
+
+
+  const index = counterData.count % 4;
+
+  const currentState = rotation[index];
+
+
   console.log(
-    `🤖 起動時刻(UTC): ${utcHour}時 -> 今回の自動割り当てタスク: 【${currentState}】`
+    `🤖 起動回数: ${counterData.count + 1}回目 → 今回の処理: 【${currentState}】`
+  );
+
+
+  // 次回用にカウントアップ
+  counterData.count =
+    counterData.count + 1;
+
+
+  // 4回でリセット
+  if (counterData.count >= 4) {
+    counterData.count = 0;
+  }
+
+
+  fs.writeFileSync(
+    counterPath,
+    JSON.stringify(counterData, null, 2),
+    'utf8'
   );
 
 
@@ -518,14 +542,16 @@ async function executePvSet(page, acc, processed) {
     headless: true
   });
 
-
   try {
 
     if (currentState === 'A_NORMAL') {
 
       const acc = accounts.find(a => a.name === 'A');
 
-      const result = await downloadAndPrepareCSV(browser, acc);
+      const result = await downloadAndPrepareCSV(
+        browser,
+        acc
+      );
 
       await executeNormalSet(
         result.page,
@@ -540,7 +566,10 @@ async function executePvSet(page, acc, processed) {
 
       const acc = accounts.find(a => a.name === 'A');
 
-      const result = await downloadAndPrepareCSV(browser, acc);
+      const result = await downloadAndPrepareCSV(
+        browser,
+        acc
+      );
 
       await executePvSet(
         result.page,
@@ -555,7 +584,10 @@ async function executePvSet(page, acc, processed) {
 
       const acc = accounts.find(a => a.name === 'B');
 
-      const result = await downloadAndPrepareCSV(browser, acc);
+      const result = await downloadAndPrepareCSV(
+        browser,
+        acc
+      );
 
       await executeNormalSet(
         result.page,
@@ -570,7 +602,10 @@ async function executePvSet(page, acc, processed) {
 
       const acc = accounts.find(a => a.name === 'B');
 
-      const result = await downloadAndPrepareCSV(browser, acc);
+      const result = await downloadAndPrepareCSV(
+        browser,
+        acc
+      );
 
       await executePvSet(
         result.page,

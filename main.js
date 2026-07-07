@@ -465,7 +465,7 @@ async function downloadAndPrepareCSV(browser, acc) {
 async function executeNormalSet(page, acc, processed) {
   console.log(`📦 【${acc.name}】[通常版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
   await uploadSingleFileOnly(page, acc, processed.normal.path1, '①通常版・非掲載（先）');
-  await uploadSingleFileOnly(page, acc, processed.normal.path2, '②通常版・掲載（後）'); // 補正完了
+  await uploadSingleFileOnly(page, acc, processed.normal.path2, '②通常版・掲載（後）');
   console.log(`🎉 【${acc.name}】通常版2ファイルのアップロード処理を送信しました。`);
 }
 
@@ -478,169 +478,72 @@ async function executePvSet(page, acc, processed) {
 
 // 🏁 起動回数ベース永久ローテーション制御
 (async () => {
-
   const counterPath = path.join(__dirname, 'counter.json');
-
-  let counterData = {
-    count: 0
-  };
+  let counterData = { count: 0 };
 
   // カウンター読み込み
   try {
     if (fs.existsSync(counterPath)) {
-      counterData = JSON.parse(
-        fs.readFileSync(counterPath, 'utf8')
-      );
+      counterData = JSON.parse(fs.readFileSync(counterPath, 'utf8'));
     }
   } catch (e) {
-    console.log(
-      '⚠️ counter.json読み込み失敗。0から開始します。'
-    );
-    counterData = {
-      count: 0
-    };
+    console.log('⚠️ counter.json読み込み失敗。0から開始します。');
+    counterData = { count: 0 };
   }
 
-
-  const rotation = [
-    'A_NORMAL',
-    'A_PV',
-    'B_NORMAL',
-    'B_PV'
-  ];
-
-
-  const index = counterData.count % 4;
-
+  const rotation = ['A_NORMAL', 'A_PV', 'B_NORMAL', 'B_PV'];
+  
+  // 現在のインデックスから状態を決定
+  const index = counterData.count % rotation.length;
   const currentState = rotation[index];
 
+  console.log(`🤖 現在のインデックス: ${index} → 今回の処理: 【${currentState}】`);
 
-  console.log(
-    `🤖 起動回数: ${counterData.count + 1}回目 → 今回の処理: 【${currentState}】`
-  );
-
-
-  // 次回用にカウントアップ
-  counterData.count =
-    counterData.count + 1;
-
-
-  // 4回でリセット
-  if (counterData.count >= 4) {
-    counterData.count = 0;
-  }
-
-
-  fs.writeFileSync(
-    counterPath,
-    JSON.stringify(counterData, null, 2),
-    'utf8'
-  );
-
-
-  const browser = await chromium.launch({
-    headless: true
-  });
+  const browser = await chromium.launch({ headless: true });
 
   try {
-
     if (currentState === 'A_NORMAL') {
-
       const acc = accounts.find(a => a.name === 'A');
-
-      const result = await downloadAndPrepareCSV(
-        browser,
-        acc
-      );
-
-      await executeNormalSet(
-        result.page,
-        acc,
-        result.processed
-      );
-
+      const result = await downloadAndPrepareCSV(browser, acc);
+      await executeNormalSet(result.page, acc, result.processed);
       await result.context.close();
-
 
     } else if (currentState === 'A_PV') {
-
       const acc = accounts.find(a => a.name === 'A');
-
-      const result = await downloadAndPrepareCSV(
-        browser,
-        acc
-      );
-
-      await executePvSet(
-        result.page,
-        acc,
-        result.processed
-      );
-
+      const result = await downloadAndPrepareCSV(browser, acc);
+      await executePvSet(result.page, acc, result.processed);
       await result.context.close();
-
 
     } else if (currentState === 'B_NORMAL') {
-
       const acc = accounts.find(a => a.name === 'B');
-
-      const result = await downloadAndPrepareCSV(
-        browser,
-        acc
-      );
-
-      await executeNormalSet(
-        result.page,
-        acc,
-        result.processed
-      );
-
+      const result = await downloadAndPrepareCSV(browser, acc);
+      await executeNormalSet(result.page, acc, result.processed);
       await result.context.close();
-
 
     } else if (currentState === 'B_PV') {
-
       const acc = accounts.find(a => a.name === 'B');
-
-      const result = await downloadAndPrepareCSV(
-        browser,
-        acc
-      );
-
-      await executePvSet(
-        result.page,
-        acc,
-        result.processed
-      );
-
+      const result = await downloadAndPrepareCSV(browser, acc);
+      await executePvSet(result.page, acc, result.processed);
       await result.context.close();
-
     }
 
-
-    console.log(
-      `🏁 【${currentState}】の処理が正常に完了しました。`
-    );
-
+    console.log(`🏁 【${currentState}】の処理が正常に完了しました。`);
 
   } catch (err) {
-
-
-    console.log(
-      `❌ エラーが発生しました。次回のスケジュール枠で再試行されます。: ${err.message}`
-    );
-
-
-    process.exit(1);
-
+    console.log(`❌ エラーが発生しました。次回のスケジュール枠では次のタスクに進みます。: ${err.message}`);
+    process.exitCode = 1;
 
   } finally {
-
-
     await browser.close();
 
-
+    // 成功・失敗に関わらず、次回用に必ずカウントを進めて保存する
+    counterData.count = (index + 1) % rotation.length;
+    
+    try {
+      fs.writeFileSync(counterPath, JSON.stringify(counterData, null, 2), 'utf8');
+      console.log(`💾 次回インデックスを保存しました: ${counterData.count} (次は 【${rotation[counterData.count]}】)`);
+    } catch (writeErr) {
+      console.log(`⚠️ counter.jsonの保存に失敗しました: ${writeErr.message}`);
+    }
   }
-
-
 })();

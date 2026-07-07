@@ -5,17 +5,18 @@ permissions:
 
 on:
   workflow_dispatch:
-
   schedule:
     - cron: '0 */6 * * *'
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # カウンターをPushするために書き込み権限付きでチェックアウトします
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -36,10 +37,13 @@ jobs:
           HITOMGR_ID_M003: ${{ secrets.HITOMGR_ID_M003 }}
           HITOMGR_PASSWORD_PASSU003: ${{ secrets.HITOMGR_PASSWORD_PASSU003 }}
           HITOMGR_ID_U003: ${{ secrets.HITOMGR_ID_U003 }}
-              - name: Save counter
+        # 実行するJSファイル名（例: index.js）に合わせてここを書き換えてください
+        run: node index.js
+
+      - name: Save counter
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add counter.json
-          git commit -m "update counter" || exit 0
-          git push
+          git commit -m "🤖 [Automated] update counter" || exit 0
+          git push origin HEAD:${{ github.ref }}

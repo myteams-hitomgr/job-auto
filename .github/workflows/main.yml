@@ -37,8 +37,8 @@ jobs:
           HITOMGR_ID_M003: ${{ secrets.HITOMGR_ID_M003 }}
           HITOMGR_PASSWORD_PASSU003: ${{ secrets.HITOMGR_PASSWORD_PASSU003 }}
           HITOMGR_ID_U003: ${{ secrets.HITOMGR_ID_U003 }}
-        # 実行するJSファイル名（例: index.js）に合わせてここを書き換えてください
-        run: node index.js
+        # 実行するJSファイル名に合わせて main.js に修正しました
+        run: node main.js
 
       - name: Save counter
         run: |

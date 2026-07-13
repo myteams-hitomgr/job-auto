@@ -372,15 +372,19 @@ async function downloadAndPrepareCSV(browser, acc) {
     const watchStartTime = Date.now(); 
 
     while (true) {
+      // 🔄 ループごとに画面上の「最新を表示する」ボタンをクリックして状態を更新
+      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
+      if (await refreshBtn.count() > 0 && await refreshBtn.isVisible()) {
+        await refreshBtn.click({ force: true }).catch(() => {});
+      }
+      
       await page.waitForTimeout(5000);
       
-      // ヘッダーを除いた、データを含む行（tr）を正確に取得
       const dataRows = await page.locator('table tbody tr, table tr:has(td)').all();
       let statusText = "";
       let detailText = "";
 
       if (dataRows.length > 0) {
-        // 最上部（リクエスト日時のすぐ下の行）のセルを抽出
         const latestRow = dataRows[0];
         const cells = await latestRow.locator('td').all();
         
@@ -400,8 +404,8 @@ async function downloadAndPrepareCSV(browser, acc) {
       }
       
       if (loopCount === 1 || loopCount % 6 === 0) {
-        const displayStatus = statusText.trim() || "読み込み中";
-        let displayDetail = detailText.trim() || "...";
+        const displayStatus = statusText || "読み込み中";
+        let displayDetail = detailText || "...";
         const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
         if (match) {
           const currentCount = parseInt(match[1], 10);
@@ -428,7 +432,6 @@ async function downloadAndPrepareCSV(browser, acc) {
     let downloadLink = null;
     
     if (finalDataRows.length > 0) {
-      // 最上部の行から直接ダウンロード要素を取得
       downloadLink = finalDataRows[0].locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
     }
 

@@ -382,9 +382,15 @@ async function downloadAndPrepareCSV(browser, acc) {
 
   // ↓↓↓ここから元のコード↓↓↓
 
-  const latestRow = page.locator('table tbody tr').first();
+const latestRow = page.locator('table tbody tr').first();
 
-  if (
+const cells = latestRow.locator('td');
+
+const requestTime = (await cells.nth(0).textContent() || "").trim();
+const statusText  = (await cells.nth(2).textContent() || "").trim();
+const detailText  = (await cells.nth(3).textContent() || "").trim();
+
+if (
     statusText.includes('完了') ||
     statusText.includes('成功') ||
     detailText.includes('rec_recruitments')

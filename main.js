@@ -372,22 +372,15 @@ async function downloadAndPrepareCSV(browser, acc) {
     const watchStartTime = Date.now(); 
 
     while (true) {
-      // 🔄 ループごとに画面上の「最新を表示する」ボタンをクリックして状態を更新
-      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
-      if (await refreshBtn.count() > 0 && await refreshBtn.isVisible()) {
-        await refreshBtn.click({ force: true }).catch(() => {});
-      }
-      
       await page.waitForTimeout(5000);
       
-      const dataRows = await page.locator('table tbody tr, table tr:has(td)').all();
+      // テーブルのtbody内にある最初のデータ行（tr）のみを直接ピンポイント指定
+      const latestRow = page.locator('table tbody tr, table tr:has(td)').first();
       let statusText = "";
       let detailText = "";
 
-      if (dataRows.length > 0) {
-        const latestRow = dataRows[0];
+      if (await latestRow.count() > 0) {
         const cells = await latestRow.locator('td').all();
-        
         if (cells.length >= 4) {
           statusText = (await cells[2].textContent() || "").trim();
           detailText = (await cells[3].textContent() || "").trim();
@@ -428,11 +421,12 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    const finalDataRows = await page.locator('table tbody tr, table tr:has(td)').all();
+    // ダウンロード時も「リクエスト日時」直下の最初の行からリンクを確定
+    const finalLatestRow = page.locator('table tbody tr, table tr:has(td)').first();
     let downloadLink = null;
     
-    if (finalDataRows.length > 0) {
-      downloadLink = finalDataRows[0].locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
+    if (await finalLatestRow.count() > 0) {
+      downloadLink = finalLatestRow.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
     }
 
     if (!downloadLink || await downloadLink.count() === 0) {

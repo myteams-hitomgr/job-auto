@@ -398,7 +398,10 @@ async function downloadAndPrepareCSV(browser, acc) {
     break;
   }
 
-  if (loopCount === 1 || loopCount % 6 === 0) {
+  const now = Date.now();
+
+if (now - lastLogTime >= 10000) {
+    lastLogTime = now;
     let displayDetail = detailText || "...";
 
     const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);

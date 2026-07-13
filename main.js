@@ -372,51 +372,59 @@ async function downloadAndPrepareCSV(browser, acc) {
     const watchStartTime = Date.now(); 
 
     while (true) {
-      await page.waitForTimeout(5000);
-      
-      // テーブルのtbody内にある最初のデータ行（tr）のみを直接ピンポイント指定
-      const latestRow = page.locator('table tbody tr, table tr:has(td)').first();
-      let statusText = "";
-      let detailText = "";
+  await page.waitForTimeout(5000);
 
-      if (await latestRow.count() > 0) {
-        const cells = await latestRow.locator('td').all();
-        if (cells.length >= 4) {
-          statusText = (await cells[2].textContent() || "").trim();
-          detailText = (await cells[3].textContent() || "").trim();
-        }
-      }
+  // 毎回最新のDOMから1行目を取得（画面が自動リロードされても対応）
+  const latestRow = page.locator('table tbody tr').first();
 
-      if (statusText.length > 0 && (statusText.includes('キャンセル') || detailText.includes('キャンセル'))) {
-        throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
-      }
+  await latestRow.waitFor({ state: 'visible' });
 
-      if (statusText.includes('完了') || statusText.includes('成功') || detailText.includes('rec_recruitments')) {
-        console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
-        break;
+  const cells = latestRow.locator('td');
+
+  const requestTime = (await cells.nth(0).textContent() || "").trim();
+  const statusText = (await cells.nth(2).textContent() || "").trim();
+  const detailText = (await cells.nth(3).textContent() || "").trim();
+
+  if (statusText.includes('キャンセル') || detailText.includes('キャンセル')) {
+    throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
+  }
+
+  if (
+    statusText.includes('完了') ||
+    statusText.includes('成功') ||
+    detailText.includes('rec_recruitments')
+  ) {
+    console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
+    break;
+  }
+
+  if (loopCount === 1 || loopCount % 6 === 0) {
+    let displayDetail = detailText || "...";
+
+    const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
+
+    if (match) {
+      const currentCount = parseInt(match[1], 10);
+      const totalCount = parseInt(match[2], 10);
+
+      if (currentCount > 0 && totalCount > 0) {
+        const elapsed = (Date.now() - watchStartTime) / 1000;
+        const percent = ((currentCount / totalCount) * 100).toFixed(1);
+        const estimatedTotalTime = (elapsed / currentCount) * totalCount;
+        const remaining = Math.max(0, estimatedTotalTime - elapsed);
+
+        const rMin = Math.floor(remaining / 60);
+        const rSec = Math.floor(remaining % 60);
+
+        displayDetail = `${currentCount}/${totalCount}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
       }
-      
-      if (loopCount === 1 || loopCount % 6 === 0) {
-        const displayStatus = statusText || "読み込み中";
-        let displayDetail = detailText || "...";
-        const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
-        if (match) {
-          const currentCount = parseInt(match[1], 10);
-          const totalCount = parseInt(match[2], 10);
-          if (currentCount > 0 && totalCount > 0) {
-            const elapsed = (Date.now() - watchStartTime) / 1000;
-            const percent = ((currentCount / totalCount) * 100).toFixed(1);
-            const estimatedTotalTime = (elapsed / currentCount) * totalCount;
-            const remaining = Math.max(0, estimatedTotalTime - elapsed);
-            const rMin = Math.floor(remaining / 60);
-            const rSec = Math.floor(remaining % 60);
-            displayDetail = `${currentCount}/${totalCount}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
-          }
-        }
-        console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${displayStatus}] ${displayDetail}`);
-      }
-      loopCount++;
     }
+
+    console.log(`⏳ 【${acc.name}】 ${requestTime} | [${statusText}] ${displayDetail}`);
+  }
+
+  loopCount++;
+}
 
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 

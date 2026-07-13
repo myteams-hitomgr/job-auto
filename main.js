@@ -370,6 +370,7 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
     let loopCount = 1;
     const watchStartTime = Date.now(); 
+    let lastLogTime = 0;
 
     while (true) {
   await page.waitForTimeout(5000);

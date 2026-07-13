@@ -373,22 +373,16 @@ async function downloadAndPrepareCSV(browser, acc) {
     let lastLogTime = 0;
 
     while (true) {
+  console.log("🔄 while開始");
+
   await page.waitForTimeout(5000);
+  console.log("① 5秒待機完了");
 
-  // 毎回最新のDOMから1行目を取得（画面が自動リロードされても対応）
-  const latestRow = page.locator('table tbody tr').first();
+  const rowCount = await page.locator("table tbody tr").count();
+  console.log("② table tbody tr の件数 = " + rowCount);
 
-  await latestRow.waitFor({ state: 'visible' });
-
-  const cells = latestRow.locator('td');
-
-  const requestTime = (await cells.nth(0).textContent() || "").trim();
-  const statusText = (await cells.nth(2).textContent() || "").trim();
-  const detailText = (await cells.nth(3).textContent() || "").trim();
-
-  if (statusText.includes('キャンセル') || detailText.includes('キャンセル')) {
-    throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
-  }
+  break;
+}
 
   if (
     statusText.includes('完了') ||

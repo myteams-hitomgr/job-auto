@@ -376,13 +376,15 @@ async function downloadAndPrepareCSV(browser, acc) {
   console.log("🔄 while開始");
 
   await page.waitForTimeout(5000);
-  console.log("① 5秒待機完了");
 
   const rowCount = await page.locator("table tbody tr").count();
-  console.log("② table tbody tr の件数 = " + rowCount);
+  console.log("② 行数=" + rowCount);
 
-  break;
-}
+  // ↓↓↓ここから元のコード↓↓↓
+
+  const latestRow = page.locator('table tbody tr').first();
+
+  ...
 
   if (
     statusText.includes('完了') ||

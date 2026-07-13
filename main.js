@@ -373,19 +373,20 @@ async function downloadAndPrepareCSV(browser, acc) {
 
     while (true) {
       await page.waitForTimeout(5000);
-      const rows = await page.locator('table tr').all();
+      
+      // ヘッダーを除いた、データを含む行（tr）を正確に取得
+      const dataRows = await page.locator('table tbody tr, table tr:has(td)').all();
       let statusText = "";
       let detailText = "";
 
-      for (const row of rows) {
-        const cells = await row.locator('td').all();
+      if (dataRows.length > 0) {
+        // 最上部（リクエスト日時のすぐ下の行）のセルを抽出
+        const latestRow = dataRows[0];
+        const cells = await latestRow.locator('td').all();
+        
         if (cells.length >= 4) {
-          const dateText = await cells[0].evaluate(el => el.textContent || "");
-          if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
-            statusText = await cells[2].evaluate(el => el.textContent || "");
-            detailText = await cells[3].evaluate(el => el.textContent || "");
-            break;
-          }
+          statusText = (await cells[2].textContent() || "").trim();
+          detailText = (await cells[3].textContent() || "").trim();
         }
       }
 
@@ -423,20 +424,15 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    const finalRows = await page.locator('table tr').all();
+    const finalDataRows = await page.locator('table tbody tr, table tr:has(td)').all();
     let downloadLink = null;
-    for (const row of finalRows) {
-      const cells = await row.locator('td').all();
-      if (cells.length >= 4) {
-        const dateText = await cells[0].evaluate(el => el.textContent || "");
-        if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
-          downloadLink = row.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
-          break;
-        }
-      }
+    
+    if (finalDataRows.length > 0) {
+      // 最上部の行から直接ダウンロード要素を取得
+      downloadLink = finalDataRows[0].locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
     }
 
-    if (!downloadLink) {
+    if (!downloadLink || await downloadLink.count() === 0) {
       throw new Error("CSV of download link cannot be specified.");
     }
 

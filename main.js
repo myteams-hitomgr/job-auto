@@ -372,17 +372,43 @@ async function downloadAndPrepareCSV(browser, acc) {
     const watchStartTime = Date.now(); 
     let lastLogTime = 0;
 
-    while (true) {
-  console.log("🔄 while開始");
+while (true) {
 
-  await page.waitForTimeout(5000);
+    console.log("🔄 while開始");
 
-  const rowCount = await page.locator("table tbody tr").count();
-  console.log("② 行数=" + rowCount);
+    await page.waitForTimeout(5000);
 
-  // ↓↓↓ここから元のコード↓↓↓
+    console.log("URL=", page.url());
 
-const latestRow = page.locator('table tbody tr').first();
+    const frames = page.frames();
+    console.log("iframe数=", frames.length);
+
+    for (const frame of frames) {
+        console.log("FRAME=", frame.url());
+    }
+
+    console.log("table数=", await page.locator("table").count());
+    console.log("tbody数=", await page.locator("tbody").count());
+    console.log("tr数=", await page.locator("tr").count());
+    console.log("td数=", await page.locator("td").count());
+
+    fs.writeFileSync(
+        `debug_${acc.name}.html`,
+        await page.content(),
+        "utf8"
+    );
+
+    const rowCount = await page.locator("table tbody tr").count();
+    console.log("② 行数=" + rowCount);
+
+    if (rowCount === 0) {
+        console.log("まだ取得できません");
+        continue;
+    }
+
+    const latestRow = page.locator("table tbody tr").first();
+
+    const cells = latestRow.locator("td");
 
 const cells = latestRow.locator('td');
 

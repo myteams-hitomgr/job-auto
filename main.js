@@ -384,8 +384,6 @@ async function downloadAndPrepareCSV(browser, acc) {
 
   const latestRow = page.locator('table tbody tr').first();
 
-  ...
-
   if (
     statusText.includes('完了') ||
     statusText.includes('成功') ||

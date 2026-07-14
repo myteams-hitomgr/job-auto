@@ -223,16 +223,35 @@ function processCSVFile(filePath, accountName) {
   return { normal: normalFiles, pv: pvFiles };
 }
 
+async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
+  try {
+    const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
+    if (await menuHoverIcon.count() > 0) {
+      await menuHoverIcon.hover();
+      await page.waitForTimeout(1000);
+      const subMenuLink = page.locator(`a:has-text("${targetText}")`).first();
+      if (await subMenuLink.count() > 0 && await subMenuLink.isVisible()) {
+        await subMenuLink.click();
+        await page.waitForLoadState('networkidle').catch(() => {});
+        return;
+      }
+    }
+  } catch (err) {
+  }
+  const destinationUrl = acc.url.replace('/login/', `/${targetUrlSegment}`);
+  await page.goto(destinationUrl, { waitUntil: 'networkidle' }).catch(() => {});
+  await page.waitForTimeout(1500);
+}
+
 async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   console.log(`👉 【${acc.name}】[${label}] 募集一覧画面へ移動します...`);
-  const baseUrl = acc.url.endsWith('/login/') ? acc.url.slice(0, -7) : acc.url;
-  const recruitUrl = `${baseUrl}/rec_recruitments`;
+  const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
   await page.goto(recruitUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
 
   console.log(`👉 【${acc.name}】[${label}] 『ファイル取込予約』ボタンをクリックしてポップアップを開きます...`);
   const openModalBtn = page.locator('a:has-text("ファイル取込予約")').first();
   await openModalBtn.waitFor({ state: 'visible', timeout: 10000 });
-  openModalBtn.click({ force: true });
+  await openModalBtn.click({ force: true });
   
   await page.waitForTimeout(2000);
 
@@ -336,97 +355,105 @@ async function downloadAndPrepareCSV(browser, acc) {
     await page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    const baseUrl = acc.url.endsWith('/login/') ? acc.url.slice(0, -7) : acc.url;
-    const recruitUrl = `${baseUrl}/rec_recruitments`;
+    const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
     await page.goto(recruitUrl, { waitUntil: 'networkidle' });
 
     console.log(`👉 【${acc.name}】「ファイル取出予約」を実行します（全求人対象）`);
     const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約")').first();
     await exportBtn.waitFor({ state: 'visible', timeout: 30000 });
-    
     await exportBtn.click({ force: true });
-    console.log(`⏳ システムによる自動画面切り替えを待っています...`);
-    await page.waitForLoadState('networkidle').catch(() => {});
-    await page.waitForTimeout(4000);
+    
+    // 💡 あの時うまくいっていた「8秒しっかり待ってから上部メニューで飛ぶ」を完全再現
+    console.log(`💤 システムのバッファ確保のため、8秒間待機しています...`);
+    await page.waitForTimeout(8000);
+
+    console.log(`👉 【${acc.name}】上部メニューから「取出ファイル一覧」へ安全に画面切り替えをおこないます...`);
+    await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を【10秒サイクル】で監視開始します...`);
     let loopCount = 1;
 
     while (true) {
-      // 🛠️ 割り込み回避：ループの先頭で現在のURLをチェックし、エラー画面なら正しいURLへ力尽くで戻す
+      // ⏱️ 要求通り、ここで10秒しっかりとウェイトをかける
+      await page.waitForTimeout(10000);
+
+      // 万が一自動遷移のバグや404エラーに巻き込まれていたら正しいURLへ引き戻す
       const currentUrl = page.url();
       if (currentUrl.includes('errors/notfounds') || currentUrl.includes('error')) {
-        console.log("⚠️ 予期せぬエラー画面（404等）を検出しました。正しい一覧URLへ強制修正します...");
-        const targetListUrl = `${baseUrl}/rec_export_histories`;
+        console.log("⚠️ 予期せぬエラー画面を検出。正しい取出一覧URLへ強制修正します...");
+        const targetListUrl = acc.url.replace('/login/', '/rec_export_histories');
         await page.goto(targetListUrl, { waitUntil: 'networkidle' }).catch(() => {});
         await page.waitForTimeout(3000);
       }
 
-      // 毎ループごとに「最新を表示する」ボタンがあれば能動的にクリックして最新状態に更新
+      // 「最新を表示する」ボタンがあればクリックして画面状態をアップデート
       const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する")').first();
       if (await refreshBtn.count() > 0 && await refreshBtn.isVisible()) {
         await refreshBtn.click({ force: true }).catch(() => {});
         await page.waitForLoadState('networkidle').catch(() => {});
       }
 
-      // テーブル内のデータ行を捕捉
-      const rowsLocator = page.locator('table tr:has(td)');
-      const rowCount = await rowsLocator.count();
-      
-      if (rowCount === 0) {
-        console.log(`⏳ 【監視ログ】テーブルデータをロード中... (チェック回数: ${loopCount})`);
-        await page.waitForTimeout(10000);
+      // テーブルのデータ行(td持ち)を全スキャン
+      const rows = await page.locator('table tr:has(td)').all();
+      let statusText = "";
+      let detailText = "";
+      let requestTime = "";
+
+      for (const row of rows) {
+        const cells = await row.locator('td').all();
+        if (cells.length >= 4) {
+          const dateText = await cells[0].evaluate(el => el.textContent || "");
+          // 今日の日付行、または日時フォーマットらしき行を特定
+          if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
+            requestTime = dateText.trim();
+            statusText = await cells[2].evaluate(el => el.textContent || "");
+            detailText = await cells[3].evaluate(el => el.textContent || "");
+            break;
+          }
+        }
+      }
+
+      // 行をうまく掴めていない場合は、ロード中とみなして次へ
+      if (!statusText) {
+        console.log(`⏳ 【監視ログ】データテーブルの更新待ち... (チェック回数: ${loopCount})`);
         loopCount++;
         continue;
       }
 
-      const latestRow = rowsLocator.first();
-      const cells = latestRow.locator("td"); 
-      const cellCount = await cells.count();
+      // 📢 10秒ごとに現在の進捗を1行で強制出力！
+      console.log(`📢 【ヒトマネ最新進捗】日時: ${requestTime} | 状態: [${statusText.trim()}] | 詳細: ${detailText.trim()} (ループ: ${loopCount})`);
 
-      if (cellCount < 4) {
-        await page.waitForTimeout(10000);
-        loopCount++;
-        continue;
+      if (statusText.includes('キャンセル') || detailText.includes('キャンセル')) {
+        throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
       }
 
-      const requestTime = (await cells.nth(0).textContent() || "").trim();
-      const statusText  = (await cells.nth(2).textContent() || "").trim();
-      const detailText  = (await cells.nth(3).textContent() || "").trim();
-
-      // 📢 リクエスト日時の下の行の内容を確実にターミナルへ出力
-      console.log(`📢 【ヒトマネ最新進捗】日時: ${requestTime} | 状態: [${statusText}] | 詳細: ${detailText}`);
-
-      fs.writeFileSync(
-        `debug_${acc.name}.html`,
-        await page.content(),
-        "utf8"
-      );
-
-      // 完了またはダウンロードリンクが出現したらループを抜ける
+      // 完了・成功、またはリンクを発見したらループをブレイク
       if (
-        statusText.includes('完了') ||
-        statusText.includes('成功') ||
-        detailText.includes('rec_recruitments') ||
-        (await cells.nth(3).locator('a').count() > 0)
+        statusText.includes('完了') || 
+        statusText.includes('成功') || 
+        detailText.includes('rec_recruitments')
       ) {
         console.log(`✅ 【${acc.name}】CSVの生成完了を確認しました！`);
         break;
       }
 
-      // ⏱️ 10秒待機
-      await page.waitForTimeout(10000);
       loopCount++;
     }
 
-    console.log(`👉 【${acc.name}】ダウンロードリンクを捕捉します...`);
+    console.log(`👉 【${acc.name}】画面の最終確認をおこない、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    const finalLatestRow = page.locator('table tr:has(td)').first();
+    const finalRows = await page.locator('table tr:has(td)').all();
     let downloadLink = null;
-    
-    if (await finalLatestRow.count() > 0) {
-      downloadLink = finalLatestRow.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
+    for (const row of finalRows) {
+      const cells = await row.locator('td').all();
+      if (cells.length >= 4) {
+        const dateText = await cells[0].evaluate(el => el.textContent || "");
+        if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
+          downloadLink = row.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
+          break;
+        }
+      }
     }
 
     if (!downloadLink || await downloadLink.count() === 0) {

@@ -234,7 +234,7 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
       if (await subMenuLink.count() > 0 && await subMenuLink.isVisible()) {
         await subMenuLink.click();
         await page.waitForLoadState('networkidle').catch(() => {});
-        await page.waitForTimeout(5000); // 💡 遷移後の裏側処理を待つために長めに待機
+        await page.waitForTimeout(4000);
         return;
       }
     }
@@ -242,7 +242,7 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
   }
   const destinationUrl = `${baseUrl}/${targetUrlSegment}`;
   await page.goto(destinationUrl, { waitUntil: 'networkidle' }).catch(() => {});
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(4000);
 }
 
 async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
@@ -371,30 +371,25 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】「取出ファイル一覧」画面へ移動します...`);
     await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
 
-    console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
+    console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中（ボタン押下を廃止し、自動更新に追従します）...`);
     let loopCount = 1;
 
     while (true) {
-      console.log(`\n🔄 監視ループ中 (回数: ${loopCount})`);
-      
-      // 💡 エラー画面に飛ばされた場合、直接一覧URLを叩くのではなく、一度募集一覧を経由してセッションを引き戻す安全ルート
+      // 💡 ボタンは絶対に押さず、システム側の「勝手な自動リロード」の邪魔をしないように3秒だけ待機
+      await page.waitForTimeout(3000);
+
+      // 万が一エラー画面（404）に弾かれた場合のみ、正規ルートで復帰
       if (page.url().includes('errors/notfounds')) {
-        console.log("⚠️ エラー画面を検知。募集管理を経由して再侵入を試みます...");
+        console.log("⚠️ エラー画面を回避するため、安全ルートで再接続します...");
         await page.goto(`${baseUrl}/rec_recruitments`, { waitUntil: 'networkidle' }).catch(() => {});
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(2000);
         await page.goto(`${baseUrl}/rec_export_histories`, { waitUntil: 'networkidle' }).catch(() => {});
-        await page.waitForTimeout(5000);
+        await page.waitForTimeout(3000);
       }
 
       const rowCount = await page.locator("table tbody tr").count();
       if (rowCount === 0) {
-        console.log("⏳ 一覧テーブルの読み込みを待っています（行数=0）");
-        // 最新を表示するボタンが万が一あれば押してみる
-        const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
-        if (await refreshBtn.count() > 0 && await refreshBtn.isVisible()) {
-          await refreshBtn.click({ force: true }).catch(() => {});
-        }
-        await page.waitForTimeout(8000);
+        console.log(`⏳ 一覧テーブルを読み込み中... (ループ: ${loopCount})`);
         loopCount++;
         continue;
       }
@@ -403,7 +398,6 @@ async function downloadAndPrepareCSV(browser, acc) {
       const cells = latestRow.locator("td"); 
 
       if (await cells.count() < 4) {
-        await page.waitForTimeout(5000);
         loopCount++;
         continue;
       }
@@ -412,8 +406,8 @@ async function downloadAndPrepareCSV(browser, acc) {
       const statusText  = (await cells.nth(2).textContent() || "").trim();
       const detailText  = (await cells.nth(3).textContent() || "").trim();
 
-      // 🛠️ 要求通り、JOBのログ画面に「読み込み中」や進行件数テキストを【強制出力】させる処理
-      console.log(`📢 【ヒトマネ詳細情報】[${statusText}] ${detailText} (リクエスト: ${requestTime})`);
+      // 📢 要求通り、JOBのログ画面に「待機中」や「進行中：〇〇/〇〇件出力中 残り約〇〇分」をリアルタイム強制出力！
+      console.log(`📢 【ヒトマネ最新進捗】[日時: ${requestTime}] | [ステータス: ${statusText}] | [詳細: ${detailText}]`);
 
       fs.writeFileSync(
         `debug_${acc.name}.html`,
@@ -421,7 +415,7 @@ async function downloadAndPrepareCSV(browser, acc) {
         "utf8"
       );
 
-      // ステータスが「完了」または詳細列にダウンロード用リンクが発生したら正常終了
+      // ステータスが「完了」「成功」になるか、詳細にダウンロードリンクが発生したらループ終了
       if (
         statusText.includes('完了') ||
         statusText.includes('成功') ||
@@ -430,15 +424,6 @@ async function downloadAndPrepareCSV(browser, acc) {
       ) {
         console.log(`✅ 【${acc.name}】CSVの生成完了を確認しました！`);
         break;
-      }
-
-      // まだ完了していない場合は「最新を表示する」ボタンをクリックしてステータス更新を促す
-      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
-      if (await refreshBtn.count() > 0 && await refreshBtn.isVisible()) {
-        await refreshBtn.click({ force: true }).catch(() => {});
-        await page.waitForTimeout(6000);
-      } else {
-        await page.waitForTimeout(7000);
       }
 
       loopCount++;
@@ -499,7 +484,6 @@ async function executePvSet(page, acc, processed) {
   const counterPath = path.join(__dirname, 'counter.json');
   let counterData = { count: 0 };
 
-  // カウンター読み込み
   try {
     if (fs.existsSync(counterPath)) {
       counterData = JSON.parse(fs.readFileSync(counterPath, 'utf8'));
@@ -510,8 +494,6 @@ async function executePvSet(page, acc, processed) {
   }
 
   const rotation = ['A_NORMAL', 'A_PV', 'B_NORMAL', 'B_PV'];
-  
-  // 現在のインデックスから状態を決定
   const index = counterData.count % rotation.length;
   const currentState = rotation[index];
 
@@ -553,8 +535,6 @@ async function executePvSet(page, acc, processed) {
 
   } finally {
     await browser.close();
-
-    // 成功・失敗に関わらず、次回用に必ずカウントを進めて保存する
     counterData.count = (index + 1) % rotation.length;
     
     try {

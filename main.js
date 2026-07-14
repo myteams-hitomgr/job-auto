@@ -224,6 +224,14 @@ function processCSVFile(filePath, accountName) {
 }
 
 async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
+  
+  await page.screenshot({ path: 'menu_debug.png', fullPage: true });
+fs.writeFileSync(
+  path.join(__dirname, 'menu_debug.html'),
+  await page.content(),
+  'utf8'
+);
+  
   try {
     const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
     if (await menuHoverIcon.count() > 0) {

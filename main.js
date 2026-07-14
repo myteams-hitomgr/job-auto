@@ -238,14 +238,14 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
     }
   } catch (err) {
   }
-  const destinationUrl = acc.url.replace(/\/login\/?$/, '') + '/' + targetUrlSegment;
+  const destinationUrl = acc.url.replace('/login/', `/${targetUrlSegment}`);
   await page.goto(destinationUrl, { waitUntil: 'networkidle' }).catch(() => {});
   await page.waitForTimeout(1500);
 }
 
 async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   console.log(`👉 【${acc.name}】[${label}] 募集一覧画面へ移動します...`);
-  const recruitUrl = acc.url.replace(/\/login\/?$/, '') + '/rec_recruitments';
+  const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
   await page.goto(recruitUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
 
   console.log(`👉 【${acc.name}】[${label}] 『ファイル取込予約』ボタンをクリックしてポップアップを開きます...`);
@@ -355,7 +355,7 @@ async function downloadAndPrepareCSV(browser, acc) {
     await page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    const recruitUrl = acc.url.replace(/\/login\/?$/, '') + '/rec_recruitments';
+    const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
     await page.goto(recruitUrl, { waitUntil: 'networkidle' });
 
     console.log(`👉 【${acc.name}】「ファイル取出予約」を実行します（全求人対象）`);
@@ -364,68 +364,96 @@ async function downloadAndPrepareCSV(browser, acc) {
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
-    // アカウントごとに「取出ファイル一覧」の遷移先URLを100%正しく出し分け
+    // B専用のURL構造（csv_export_queues）に対応
     const historySegment = (acc.name === 'B') ? "csv_export_queues" : "rec_export_histories";
-    console.log(`👉 【${acc.name}】「取出ファイル一覧」画面へ移動します... (segment: ${historySegment})`);
+    console.log(`👉 【${acc.name}】「取出ファイル一覧」画面へ移動します... (${historySegment})`);
     await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", historySegment);
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
     let loopCount = 1;
-    const startTime = Date.now();
-    const maxWaitTimeMs = 20 * 60 * 1000; // 20分で強制タイムアウト
+    const watchStartTime = Date.now(); 
 
     while (true) {
-      if (Date.now() - startTime > maxWaitTimeMs) {
-        throw new Error("⏳ CSV生成の監視が制限時間（20分）を超過したため強制終了しました。");
-      }
+      // 🌟 テーブルがサーバーから非同期で描画されるのを明示的に待つ
+      await page.waitForSelector('table tr, .table tr, tbody tr', { timeout: 10000 }).catch(() => {});
+      await page.waitForTimeout(2000); // 描画安定のために少し追加待機
 
-      // テーブルが描画されるのを明示的に最大5秒待機する（見つからない対策）
-      await page.waitForSelector('table tr', { timeout: 5000 }).catch(() => {});
+      const rows = await page.locator('table tr, .table tr, tbody tr').all();
+      let statusText = "";
+      let detailText = "";
+      let isDataLoaded = false;
 
-      // 毎ループ常に新鮮なテーブル行を取得
-      const tableRows = await page.locator('table tr').all();
-      
-      let rowTextCombined = "";
-      let hasDownloadLink = false;
+      // テーブルデータが存在するかチェック
+      if (rows.length > 1) {
+        isDataLoaded = true;
+        // Bのテーブルカラム構成は「日付」「区分」「状態(ダウンロードリンクなど)」
+        const latestRow = rows[1]; // ヘッダーを除いた最初のデータ行
+        const cells = await latestRow.locator('td').all();
 
-      // テーブル行が存在する場合のみ中身を解析
-      if (tableRows.length > 1) {
-        const latestRow = tableRows[1]; // ヘッダーの次（1行目）
-        rowTextCombined = (await latestRow.textContent() || "").trim();
-        
-        // 該当行内にダウンロード用のリンクがあるかチェック
-        const downloadElements = latestRow.locator('a[href*=".csv"], a:has-text("ダウンロード"), button:has-text("ダウンロード"), a[href*="download"]');
-        const linkCount = await downloadElements.count();
-        if (linkCount > 0) {
-          hasDownloadLink = true;
+        if (cells.length >= 2) {
+          const firstCellText = (await cells[0].textContent() || "").trim();
+          // 日付フォーマット（2026/07/14 等）または妥当なテキストが入っているか
+          if (firstCellText.includes('2026') || firstCellText.includes('/') || firstCellText.includes(':') || firstCellText.length > 0) {
+            
+            // 全セルから進捗状態に使える文言をスキャン
+            const rowFullContent = (await latestRow.textContent() || "").trim();
+            statusText = rowFullContent;
+            
+            // 進捗セルまたは詳細セルが分かれている場合、安全に抽出
+            if (cells.length >= 3) {
+              statusText = (await cells[2].textContent() || "").trim();
+            }
+            if (cells.length >= 4) {
+              detailText = (await cells[3].textContent() || "").trim();
+            } else {
+              detailText = rowFullContent; 
+            }
+          }
         }
-      } else {
-        // テーブルが画面にまだない、または描画されていない
-        rowTextCombined = "テーブル未描画（読み込み待ち）";
       }
 
-      const cleanRowText = rowTextCombined.replace(/\s+/g, ' ');
+      // 進捗テキストのクリーンアップ
+      const cleanStatus = statusText.replace(/\s+/g, ' ');
+      const cleanDetail = detailText.replace(/\s+/g, ' ');
 
-      // キャンセル検知
-      if (cleanRowText.includes('キャンセル')) {
-        throw new Error(`管理画面側で最新のリクエストが「キャンセル」されました。`);
+      if (isDataLoaded && (cleanStatus.includes('キャンセル') || cleanDetail.includes('キャンセル'))) {
+        throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
       }
 
-      // 【一発解決】「処理中」系のワードをチェック
-      const isProcessing = /読み込み中|作成中|準備中|処理中|待機中|未処理|インポート|テーブル未描画/.test(cleanRowText);
-      const isSuccess = cleanRowText.includes('完了') || cleanRowText.includes('成功') || hasDownloadLink || cleanRowText.includes('rec_recruitments');
+      // CSVのリンクがある、または「完了」となっている場合を検知
+      const hasLink = (await rows[1].locator('a[href*=".csv"], a:has-text("ダウンロード"), button:has-text("ダウンロード"), a[href*="download"]').count()) > 0;
+      
+      const isProcessing = /読み込み中|作成中|準備中|処理中|待機中|未処理|インポート/.test(cleanStatus + cleanDetail);
+      const isSuccess = cleanStatus.includes('完了') || cleanStatus.includes('成功') || cleanDetail.includes('rec_recruitments') || hasLink;
 
-      if (isSuccess && !isProcessing) {
-        console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！ (行テキスト: [${cleanRowText}])`);
+      if (isDataLoaded && isSuccess && !isProcessing) {
+        console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
         break;
       }
       
-      // 生成進行状況のログ出力
-      if (loopCount === 1 || loopCount % 4 === 0) {
-        console.log(`⏳ 【${acc.name}】生成状況を監視中... 現在の行テキスト: [${cleanRowText.slice(0, 80)}...]`);
+      if (loopCount === 1 || loopCount % 6 === 0) {
+        const displayStatus = isDataLoaded ? (cleanStatus.slice(0, 30) || "読み込み中") : "テーブル描画待ち";
+        let displayDetail = isDataLoaded ? cleanDetail.slice(0, 50) : "...";
+        
+        // 進捗パーセンテージと推定残り時間の計算
+        const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
+        if (match) {
+          const currentCount = parseInt(match[1], 10);
+          const totalCount = parseInt(match[2], 10);
+          if (currentCount > 0 && totalCount > 0) {
+            const elapsed = (Date.now() - watchStartTime) / 1000;
+            const percent = ((currentCount / totalCount) * 100).toFixed(1);
+            const estimatedTotalTime = (elapsed / currentCount) * totalCount;
+            const remaining = Math.max(0, estimatedTotalTime - elapsed);
+            const rMin = Math.floor(remaining / 60);
+            const rSec = Math.floor(remaining % 60);
+            displayDetail = `${currentCount}/${totalCount}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
+          }
+        }
+        console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${displayStatus}] ${displayDetail}`);
       }
 
-      // 🔄 「最新を表示する / 更新」をクリックしてDOM更新を促す
+      // 🔄 5秒に一度、画面上部の「最新を表示する」または「更新」を押してテーブルを強制リロード
       const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する"), a:has-text("更新"), button:has-text("更新")').first();
       if (await refreshBtn.count() > 0) {
         await refreshBtn.click({ force: true });
@@ -439,15 +467,20 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    // 最新行から確実にダウンロードボタンを特定
-    const finalRows = await page.locator('table tr').all();
+    // ダウンロードボタンを1列目から特定
+    const finalRows = await page.locator('table tr, .table tr, tbody tr').all();
     let downloadLink = null;
     if (finalRows.length > 1) {
-      const finalLatestRow = finalRows[1];
-      downloadLink = finalLatestRow.locator('a[href*=".csv"], a:has-text("ダウンロード"), button:has-text("ダウンロード"), a[href*="download"], td a, td button').first();
+      const targetRow = finalRows[1];
+      downloadLink = targetRow.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
     }
 
-    if (!downloadLink || await downloadLink.count() === 0) {
+    if (!downloadLink || (await downloadLink.count()) === 0) {
+      // 予備のフォールバック：画面全体の最初のダウンロードリンクを探す
+      downloadLink = page.locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
+    }
+
+    if (!downloadLink || (await downloadLink.count()) === 0) {
       throw new Error("CSV of download link cannot be specified.");
     }
 
@@ -489,166 +522,72 @@ async function executePvSet(page, acc, processed) {
 
 // 🏁 起動回数ベース永久ローテーション制御
 (async () => {
-
   const counterPath = path.join(__dirname, 'counter.json');
+  let counterData = { count: 0 };
 
-  let counterData = {
-    count: 0
-  };
-
+  // カウンター読み込み
   try {
     if (fs.existsSync(counterPath)) {
-      counterData = JSON.parse(
-        fs.readFileSync(counterPath, 'utf8')
-      );
+      counterData = JSON.parse(fs.readFileSync(counterPath, 'utf8'));
     }
   } catch (e) {
-    console.log(
-      '⚠️ counter.json読み込み失敗。0から開始します。'
-    );
-    counterData = {
-      count: 0
-    };
+    console.log('⚠️ counter.json読み込み失敗。0から開始します。');
+    counterData = { count: 0 };
   }
 
-
-  const rotation = [
-    'A_NORMAL',
-    'A_PV',
-    'B_NORMAL',
-    'B_PV'
-  ];
-
-
-  const index = counterData.count % 4;
-
+  const rotation = ['A_NORMAL', 'A_PV', 'B_NORMAL', 'B_PV'];
+  
+  // 現在のインデックスから状態を決定
+  const index = counterData.count % rotation.length;
   const currentState = rotation[index];
 
+  console.log(`🤖 現在のインデックス: ${index} → 今回の処理: 【${currentState}】`);
 
-  console.log(
-    `🤖 起動回数: ${counterData.count + 1}回目 → 今回の処理: 【${currentState}】`
-  );
-
-
-  counterData.count =
-    counterData.count + 1;
-
-
-  if (counterData.count >= 4) {
-    counterData.count = 0;
-  }
-
-
-  fs.writeFileSync(
-    counterPath,
-    JSON.stringify(counterData, null, 2),
-    'utf8'
-  );
-
-
-  const browser = await chromium.launch({
-    headless: true
-  });
+  const browser = await chromium.launch({ headless: true });
 
   try {
-
     if (currentState === 'A_NORMAL') {
-
       const acc = accounts.find(a => a.name === 'A');
-
-      const result = await downloadAndPrepareCSV(
-        browser,
-        acc
-      );
-
-      await executeNormalSet(
-        result.page,
-        acc,
-        result.processed
-      );
-
+      const result = await downloadAndPrepareCSV(browser, acc);
+      await executeNormalSet(result.page, acc, result.processed);
       await result.context.close();
-
 
     } else if (currentState === 'A_PV') {
-
       const acc = accounts.find(a => a.name === 'A');
-
-      const result = await downloadAndPrepareCSV(
-        browser,
-        acc
-      );
-
-      await executePvSet(
-        result.page,
-        acc,
-        result.processed
-      );
-
+      const result = await downloadAndPrepareCSV(browser, acc);
+      await executePvSet(result.page, acc, result.processed);
       await result.context.close();
-
 
     } else if (currentState === 'B_NORMAL') {
-
       const acc = accounts.find(a => a.name === 'B');
-
-      const result = await downloadAndPrepareCSV(
-        browser,
-        acc
-      );
-
-      await executeNormalSet(
-        result.page,
-        acc,
-        result.processed
-      );
-
+      const result = await downloadAndPrepareCSV(browser, acc);
+      await executeNormalSet(result.page, acc, result.processed);
       await result.context.close();
-
 
     } else if (currentState === 'B_PV') {
-
       const acc = accounts.find(a => a.name === 'B');
-
-      const result = await downloadAndPrepareCSV(
-        browser,
-        acc
-      );
-
-      await executePvSet(
-        result.page,
-        acc,
-        result.processed
-      );
-
+      const result = await downloadAndPrepareCSV(browser, acc);
+      await executePvSet(result.page, acc, result.processed);
       await result.context.close();
-
     }
 
-
-    console.log(
-      `🏁 【${currentState}】の処理が正常に完了しました。`
-    );
-
+    console.log(`🏁 【${currentState}】の処理が正常に完了しました。`);
 
   } catch (err) {
-
-
-    console.log(
-      `❌ エラーが発生しました。次回のスケジュール枠で再試行されます。: ${err.message}`
-    );
-
-
-    process.exit(1);
-
+    console.log(`❌ エラーが発生しました。次回のスケジュール枠では次のタスクに進みます。: ${err.message}`);
+    process.exitCode = 1;
 
   } finally {
-
-
     await browser.close();
 
-
+    // 成功・失敗に関わらず、次回用に必ずカウントを進めて保存する
+    counterData.count = (index + 1) % rotation.length;
+    
+    try {
+      fs.writeFileSync(counterPath, JSON.stringify(counterData, null, 2), 'utf8');
+      console.log(`💾 次回インデックスを保存しました: ${counterData.count} (次は 【${rotation[counterData.count]}】)`);
+    } catch (writeErr) {
+      console.log(`⚠️ counter.jsonの保存に失敗しました: ${writeErr.message}`);
+    }
   }
-
-
 })();

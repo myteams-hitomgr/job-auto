@@ -367,6 +367,13 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】上部メニューの矢印ボタンにマウスを乗せます...`);
     await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
 
+    // 🎯 最初（ボタンを押す前）の「リクエスト日時」のテキストを取得しておく
+    let initialTimeText = "";
+    const firstRowTimeCell = page.locator('table tr').nth(1).locator('td').first();
+    if (await firstRowTimeCell.count() > 0) {
+      initialTimeText = await firstRowTimeCell.evaluate(el => el.textContent || "");
+    }
+
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
     let loopCount = 1;
 
@@ -374,15 +381,19 @@ async function downloadAndPrepareCSV(browser, acc) {
       // 🔄 画面上の「最新を表示する」ボタンをクリック
       const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する")').first();
       if (await refreshBtn.count() > 0) {
-        // ボタンをクリックすると同時に、通信（Ajax）が完了するまで確実に待機する
-        await Promise.all([
-          page.waitForLoadState('networkidle').catch(() => {}),
-          refreshBtn.click({ force: true })
-        ]);
-        await page.waitForTimeout(2000); // 念のためのHTMLレンダリング猶予
+        await refreshBtn.click({ force: true });
+        
+        // 🛑 【超重要】ボタン押下後、ページ内が完全に書き換わる（またはリロードされる）まで最大5秒間ブロックして待つ
+        await page.waitForFunction((oldTime) => {
+          const cell = document.querySelector('table tr:nth-child(2) td:nth-child(1)');
+          if (!cell) return false;
+          const currentTime = cell.textContent || "";
+          // 最初の時間から変化している、もしくは中身が空でない有効な値が入っていれば書き換え成功とみなす
+          return currentTime.trim() !== "" && currentTime !== oldTime;
+        }, initialTimeText, { timeout: 5000 }).catch(() => {});
       }
 
-      // 🎯 最新のデータ行（実質最上行）を一択ターゲット
+      // 🎯 書き換えが担保された状態の実質1行目を厳密キャッチ
       const latestRow = page.locator('table tr').nth(1);
       
       let statusText = "";

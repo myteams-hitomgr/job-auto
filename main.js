@@ -224,6 +224,7 @@ function processCSVFile(filePath, accountName) {
 }
 
 async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
+  const baseUrl = acc.url.endsWith('/login/') ? acc.url.slice(0, -7) : acc.url;
   try {
     const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
     if (await menuHoverIcon.count() > 0) {
@@ -233,15 +234,15 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
       if (await subMenuLink.count() > 0 && await subMenuLink.isVisible()) {
         await subMenuLink.click();
         await page.waitForLoadState('networkidle').catch(() => {});
+        await page.waitForTimeout(5000); // 💡 遷移後の裏側処理を待つために長めに待機
         return;
       }
     }
   } catch (err) {
   }
-  const baseUrl = acc.url.endsWith('/login/') ? acc.url.slice(0, -7) : acc.url;
   const destinationUrl = `${baseUrl}/${targetUrlSegment}`;
   await page.goto(destinationUrl, { waitUntil: 'networkidle' }).catch(() => {});
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(5000);
 }
 
 async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
@@ -376,29 +377,33 @@ async function downloadAndPrepareCSV(browser, acc) {
     while (true) {
       console.log(`\n🔄 監視ループ中 (回数: ${loopCount})`);
       
-      // 💡 ボタンクリックやリロードをせず、その場のDOM要素が更新されるのを5秒待つ
-      await page.waitForTimeout(5000);
-
-      // 404エラー画面に飛ばされた場合は、正しい「取出ファイル一覧」URLに力づくで戻す安全措置
+      // 💡 エラー画面に飛ばされた場合、直接一覧URLを叩くのではなく、一度募集一覧を経由してセッションを引き戻す安全ルート
       if (page.url().includes('errors/notfounds')) {
-        console.log("⚠️ エラー画面を検知。正しい一覧URLへ再侵入します...");
-        const listUrl = `${baseUrl}/rec_export_histories`;
-        await page.goto(listUrl, { waitUntil: 'networkidle' }).catch(() => {});
-        await page.waitForTimeout(2000);
+        console.log("⚠️ エラー画面を検知。募集管理を経由して再侵入を試みます...");
+        await page.goto(`${baseUrl}/rec_recruitments`, { waitUntil: 'networkidle' }).catch(() => {});
+        await page.waitForTimeout(3000);
+        await page.goto(`${baseUrl}/rec_export_histories`, { waitUntil: 'networkidle' }).catch(() => {});
+        await page.waitForTimeout(5000);
       }
 
       const rowCount = await page.locator("table tbody tr").count();
       if (rowCount === 0) {
         console.log("⏳ 一覧テーブルの読み込みを待っています（行数=0）");
+        // 最新を表示するボタンが万が一あれば押してみる
+        const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
+        if (await refreshBtn.count() > 0 && await refreshBtn.isVisible()) {
+          await refreshBtn.click({ force: true }).catch(() => {});
+        }
+        await page.waitForTimeout(8000);
         loopCount++;
         continue;
       }
 
-      // 最新の1行目を取得
       const latestRow = page.locator("table tbody tr").first();
       const cells = latestRow.locator("td"); 
 
       if (await cells.count() < 4) {
+        await page.waitForTimeout(5000);
         loopCount++;
         continue;
       }
@@ -407,8 +412,8 @@ async function downloadAndPrepareCSV(browser, acc) {
       const statusText  = (await cells.nth(2).textContent() || "").trim();
       const detailText  = (await cells.nth(3).textContent() || "").trim();
 
-      // 🛠️ コンソールログに「進行状況（件数・残り時間など）」を出力させる処理
-      console.log(`📊 【${acc.name}】 リクエスト時刻: ${requestTime} | ステータス: [${statusText}] | 詳細: ${detailText}`);
+      // 🛠️ 要求通り、JOBのログ画面に「読み込み中」や進行件数テキストを【強制出力】させる処理
+      console.log(`📢 【ヒトマネ詳細情報】[${statusText}] ${detailText} (リクエスト: ${requestTime})`);
 
       fs.writeFileSync(
         `debug_${acc.name}.html`,
@@ -416,7 +421,7 @@ async function downloadAndPrepareCSV(browser, acc) {
         "utf8"
       );
 
-      // ステータスが「完了」または詳細列にダウンロードリンク(aタグ)を見つけたらループ終了
+      // ステータスが「完了」または詳細列にダウンロード用リンクが発生したら正常終了
       if (
         statusText.includes('完了') ||
         statusText.includes('成功') ||
@@ -425,6 +430,15 @@ async function downloadAndPrepareCSV(browser, acc) {
       ) {
         console.log(`✅ 【${acc.name}】CSVの生成完了を確認しました！`);
         break;
+      }
+
+      // まだ完了していない場合は「最新を表示する」ボタンをクリックしてステータス更新を促す
+      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
+      if (await refreshBtn.count() > 0 && await refreshBtn.isVisible()) {
+        await refreshBtn.click({ force: true }).catch(() => {});
+        await page.waitForTimeout(6000);
+      } else {
+        await page.waitForTimeout(7000);
       }
 
       loopCount++;

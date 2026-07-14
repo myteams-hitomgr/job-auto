@@ -364,7 +364,7 @@ async function downloadAndPrepareCSV(browser, acc) {
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
-    // 【一発解決】アカウントごとに「取出ファイル一覧」の正しい遷移先URLを振り分け
+    // アカウントごとに「取出ファイル一覧」の遷移先URLを100%正しく出し分け
     const historySegment = (acc.name === 'B') ? "csv_export_queues" : "rec_export_histories";
     console.log(`👉 【${acc.name}】「取出ファイル一覧」画面へ移動します... (segment: ${historySegment})`);
     await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", historySegment);
@@ -372,37 +372,36 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
     let loopCount = 1;
     const startTime = Date.now();
-    const maxWaitTimeMs = 20 * 60 * 1000; // 20分で強制タイムアウト抜け
+    const maxWaitTimeMs = 20 * 60 * 1000; // 20分で強制タイムアウト
 
     while (true) {
       if (Date.now() - startTime > maxWaitTimeMs) {
         throw new Error("⏳ CSV生成の監視が制限時間（20分）を超過したため強制終了しました。");
       }
 
-      // 🔄 最新表示・更新ボタンをトリガーしてDOMの再描画を行う
-      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する"), a:has-text("更新"), button:has-text("更新")').first();
-      if (await refreshBtn.count() > 0) {
-        await refreshBtn.click({ force: true });
-        await page.waitForLoadState('networkidle').catch(() => {});
-        await page.waitForTimeout(3000);
-      }
+      // テーブルが描画されるのを明示的に最大5秒待機する（見つからない対策）
+      await page.waitForSelector('table tr', { timeout: 5000 }).catch(() => {});
 
-      // 毎ループ常に新鮮なテーブル要素全体を引っ張る
+      // 毎ループ常に新鮮なテーブル行を取得
       const tableRows = await page.locator('table tr').all();
       
       let rowTextCombined = "";
       let hasDownloadLink = false;
 
+      // テーブル行が存在する場合のみ中身を解析
       if (tableRows.length > 1) {
-        const latestRow = tableRows[1]; // データ先頭行
+        const latestRow = tableRows[1]; // ヘッダーの次（1行目）
         rowTextCombined = (await latestRow.textContent() || "").trim();
         
-        // 該当行内にダウンロードタグがあるかチェック
+        // 該当行内にダウンロード用のリンクがあるかチェック
         const downloadElements = latestRow.locator('a[href*=".csv"], a:has-text("ダウンロード"), button:has-text("ダウンロード"), a[href*="download"]');
         const linkCount = await downloadElements.count();
         if (linkCount > 0) {
           hasDownloadLink = true;
         }
+      } else {
+        // テーブルが画面にまだない、または描画されていない
+        rowTextCombined = "テーブル未描画（読み込み待ち）";
       }
 
       const cleanRowText = rowTextCombined.replace(/\s+/g, ' ');
@@ -412,8 +411,8 @@ async function downloadAndPrepareCSV(browser, acc) {
         throw new Error(`管理画面側で最新のリクエストが「キャンセル」されました。`);
       }
 
-      // 【一発解決】列の並び順がアカウントA・Bで違っていても、行全体の文字列から確実に判定
-      const isProcessing = /読み込み中|作成中|準備中|処理中|待機中|未処理|インポート/.test(cleanRowText);
+      // 【一発解決】「処理中」系のワードをチェック
+      const isProcessing = /読み込み中|作成中|準備中|処理中|待機中|未処理|インポート|テーブル未描画/.test(cleanRowText);
       const isSuccess = cleanRowText.includes('完了') || cleanRowText.includes('成功') || hasDownloadLink || cleanRowText.includes('rec_recruitments');
 
       if (isSuccess && !isProcessing) {
@@ -425,6 +424,14 @@ async function downloadAndPrepareCSV(browser, acc) {
       if (loopCount === 1 || loopCount % 4 === 0) {
         console.log(`⏳ 【${acc.name}】生成状況を監視中... 現在の行テキスト: [${cleanRowText.slice(0, 80)}...]`);
       }
+
+      // 🔄 「最新を表示する / 更新」をクリックしてDOM更新を促す
+      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する"), a:has-text("更新"), button:has-text("更新")').first();
+      if (await refreshBtn.count() > 0) {
+        await refreshBtn.click({ force: true });
+        await page.waitForLoadState('networkidle').catch(() => {});
+      }
+
       loopCount++;
       await page.waitForTimeout(5000);
     }
@@ -432,7 +439,7 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    // 最新行から確実にダウンロードリンクを捕捉
+    // 最新行から確実にダウンロードボタンを特定
     const finalRows = await page.locator('table tr').all();
     let downloadLink = null;
     if (finalRows.length > 1) {

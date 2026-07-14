@@ -369,7 +369,6 @@ async function downloadAndPrepareCSV(browser, acc) {
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
     let loopCount = 1;
-    const watchStartTime = Date.now(); 
 
     while (true) {
       await page.waitForTimeout(5000);
@@ -400,21 +399,9 @@ async function downloadAndPrepareCSV(browser, acc) {
       
       if (loopCount === 1 || loopCount % 6 === 0) {
         const displayStatus = statusText.trim() || "読み込み中";
-        let displayDetail = detailText.trim() || "...";
-        const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
-        if (match) {
-          const currentCount = parseInt(match[1], 10);
-          const totalCount = parseInt(match[2], 10);
-          if (currentCount > 0 && totalCount > 0) {
-            const elapsed = (Date.now() - watchStartTime) / 1000;
-            const percent = ((currentCount / totalCount) * 100).toFixed(1);
-            const estimatedTotalTime = (elapsed / currentCount) * totalCount;
-            const remaining = Math.max(0, estimatedTotalTime - elapsed);
-            const rMin = Math.floor(remaining / 60);
-            const rSec = Math.floor(remaining % 60);
-            displayDetail = `${currentCount}/${totalCount}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
-          }
-        }
+        // 管理画面側のテキスト（「残り約15分4秒」など）をそのまま取得して、不要な空白や改行を半角スペースに整形
+        const displayDetail = (detailText.trim() || "...").replace(/\s+/g, ' ');
+        
         console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${displayStatus}] ${displayDetail}`);
       }
       loopCount++;

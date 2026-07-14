@@ -344,39 +344,45 @@ async function downloadAndPrepareCSV(browser, acc) {
     const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約")').first();
     await exportBtn.waitFor({ state: 'visible', timeout: 30000 });
     
-    // 💡 ボタンクリックで自動的に「取出ファイル一覧」画面へ行く仕様に合わせ、クリック後の遷移完了を待ちます
     await exportBtn.click({ force: true });
     console.log(`⏳ システムによる「取出ファイル一覧」への自動画面切り替えを待っています...`);
     await page.waitForLoadState('networkidle').catch(() => {});
+    
+    // 💡 テーブル要素がDOMに出現するまで最大30秒能動的に待機させてフリーズを防ぐ
+    await page.waitForSelector('table, tr, td', { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(3000);
 
-    console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中（画面が切り替わったため、強制文字読み取りを開始します）...`);
+    console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中（画面テキストの取得を開始）...`);
     let loopCount = 1;
 
     while (true) {
-      // 画面衝突を防ぐため、システム側の自動リロードを3秒間静かに待ちます
       await page.waitForTimeout(3000);
 
-      // 万が一弾かれて404エラー（errors/notfounds）になった場合の安全保険ルート
+      // 万が一弾かれて404エラー（errors/notfounds）になった場合の復帰ルート
       if (page.url().includes('errors/notfounds')) {
         console.log("⚠️ エラー画面を検知。ダッシュボード経由で一覧へ再侵入します...");
         await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' }).catch(() => {});
         await page.waitForTimeout(3000);
         await page.goto(`${baseUrl}/rec_export_histories`, { waitUntil: 'networkidle' }).catch(() => {});
-        await page.waitForTimeout(3000);
+        await page.waitForSelector('table, tr, td', { timeout: 10000 }).catch(() => {});
       }
 
-      const rowCount = await page.locator("table tbody tr").count();
+      // 💡 tbodyの有無に関わらず、全てのtr要素から1行目を引っ張れる強力なロケーターに変更
+      const rowsLocator = page.locator('table tr:has(td), tbody tr');
+      const rowCount = await rowsLocator.count();
+      
       if (rowCount === 0) {
-        console.log(`⏳ 一覧テーブルを読み込み中... (ループ: ${loopCount})`);
+        console.log(`⏳ 一覧テーブルデータを非同期読み込み中... (ループ: ${loopCount})`);
         loopCount++;
         continue;
       }
 
-      const latestRow = page.locator("table tbody tr").first();
+      const latestRow = rowsLocator.first();
       const cells = latestRow.locator("td"); 
+      const cellCount = await cells.count();
 
-      if (await cells.count() < 4) {
+      if (cellCount < 4) {
+        console.log(`⏳ テーブルの列情報を構築中... (検出列数: ${cellCount})`);
         loopCount++;
         continue;
       }
@@ -411,7 +417,7 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    const finalLatestRow = page.locator('table tbody tr, table tr:has(td)').first();
+    const finalLatestRow = page.locator('table tr:has(td), tbody tr').first();
     let downloadLink = null;
     
     if (await finalLatestRow.count() > 0) {

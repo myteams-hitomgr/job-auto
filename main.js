@@ -371,14 +371,18 @@ async function downloadAndPrepareCSV(browser, acc) {
     let loopCount = 1;
 
     while (true) {
-      // 🔄 画面上の「最新を表示する」ボタンをクリックしてHTMLを最新にする
+      // 🔄 画面上の「最新を表示する」ボタンをクリック
       const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する")').first();
       if (await refreshBtn.count() > 0) {
-        await refreshBtn.click({ force: true });
-        await page.waitForTimeout(1500); // 反映待ち
+        // ボタンをクリックすると同時に、通信（Ajax）が完了するまで確実に待機する
+        await Promise.all([
+          page.waitForLoadState('networkidle').catch(() => {}),
+          refreshBtn.click({ force: true })
+        ]);
+        await page.waitForTimeout(2000); // 念のためのHTMLレンダリング猶予
       }
 
-      // 🎯 最新のデータ行（ヘッダーのすぐ下の実質1行目）を強制ターゲット
+      // 🎯 最新のデータ行（実質最上行）を一択ターゲット
       const latestRow = page.locator('table tr').nth(1);
       
       let statusText = "";
@@ -392,20 +396,22 @@ async function downloadAndPrepareCSV(browser, acc) {
         }
       }
 
-      if (statusText.length > 0 && (statusText.includes('キャンセル') || detailText.includes('キャンセル'))) {
+      const cleanStatus = statusText.trim();
+      const cleanDetail = detailText.trim();
+
+      if (cleanStatus.includes('キャンセル') || cleanDetail.includes('キャンセル')) {
         throw new Error(`管理画面側で最新のリクエストが「キャンセル」されました。`);
       }
 
-      if (statusText.includes('完了') || statusText.includes('成功') || detailText.includes('rec_recruitments')) {
+      if (cleanStatus.includes('完了') || cleanStatus.includes('成功') || cleanDetail.includes('rec_recruitments')) {
         console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
         break;
       }
       
-      if (loopCount === 1 || loopCount % 6 === 0) {
-        const displayStatus = statusText.trim() || "読み込み中";
-        const displayDetail = (detailText.trim() || "...").replace(/\s+/g, ' ');
-        
-        console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${displayStatus}] ${displayDetail}`);
+      if (loopCount === 1 || loopCount % 4 === 0) {
+        const displayStatus = cleanStatus || "読み込み中";
+        const displayDetail = cleanDetail.replace(/\s+/g, ' ') || "...";
+        console.log(`⏳ 【${acc.name}】生成状況を監視中... 現在の状態: [${displayStatus}] ${displayDetail}`);
       }
       loopCount++;
       await page.waitForTimeout(5000);
@@ -414,7 +420,6 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    // 確実に対象行のリフレッシュとリンク捕捉を行う
     const finalLatestRow = page.locator('table tr').nth(1);
     let downloadLink = null;
     if (await finalLatestRow.count() > 0) {
@@ -450,7 +455,7 @@ async function downloadAndPrepareCSV(browser, acc) {
 async function executeNormalSet(page, acc, processed) {
   console.log(`📦 【${acc.name}】[通常版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
   await uploadSingleFileOnly(page, acc, processed.normal.path1, '①通常版・非掲載（先）');
-  await uploadSingleFileOnly(page, acc, processed.normal.path2, '②通常版・掲載（後）'); // 補正完了
+  await uploadSingleFileOnly(page, acc, processed.normal.path2, '②通常版・掲載（後）');
   console.log(`🎉 【${acc.name}】通常版2ファイルのアップロード処理を送信しました。`);
 }
 
@@ -470,7 +475,6 @@ async function executePvSet(page, acc, processed) {
     count: 0
   };
 
-  // カウンター読み込み
   try {
     if (fs.existsSync(counterPath)) {
       counterData = JSON.parse(
@@ -505,12 +509,10 @@ async function executePvSet(page, acc, processed) {
   );
 
 
-  // 次回用にカウントアップ
   counterData.count =
     counterData.count + 1;
 
 
-  // 4回でリセット
   if (counterData.count >= 4) {
     counterData.count = 0;
   }

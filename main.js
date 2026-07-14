@@ -345,36 +345,37 @@ async function downloadAndPrepareCSV(browser, acc) {
     await exportBtn.waitFor({ state: 'visible', timeout: 30000 });
     
     await exportBtn.click({ force: true });
-    console.log(`⏳ システムによる「取出ファイル一覧」への自動画面切り替えを待っています...`);
+    console.log(`⏳ システムによる自動画面切り替えを待っています...`);
     await page.waitForLoadState('networkidle').catch(() => {});
-    
-    // テーブルレイアウトが確実に描写されるのを少し待つ
-    await page.waitForSelector('table, tr', { timeout: 30000 }).catch(() => {});
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(4000);
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を【10秒サイクル】で監視開始します...`);
     let loopCount = 1;
 
     while (true) {
-      // ⏱️ 要求通り、10秒ごとにしっかりと監視ウェイトをかける
-      console.log(`⏳ 【監視ログ】10秒ごとの生存確認中... (チェック回数: ${loopCount})`);
-      await page.waitForTimeout(10000);
-
-      // 万が一弾かれて404エラー（errors/notfounds）になった場合の復帰ルート
-      if (page.url().includes('errors/notfounds')) {
-        console.log("⚠️ エラー画面を検知。ダッシュボード経由で一覧へ再侵入します...");
-        await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' }).catch(() => {});
+      // 🛠️ 割り込み回避：ループの先頭で現在のURLをチェックし、エラー画面なら正しいURLへ力尽くで戻す
+      const currentUrl = page.url();
+      if (currentUrl.includes('errors/notfounds') || currentUrl.includes('error')) {
+        console.log("⚠️ 予期せぬエラー画面（404等）を検出しました。正しい一覧URLへ強制修正します...");
+        const targetListUrl = `${baseUrl}/rec_export_histories`;
+        await page.goto(targetListUrl, { waitUntil: 'networkidle' }).catch(() => {});
         await page.waitForTimeout(3000);
-        await page.goto(`${baseUrl}/rec_export_histories`, { waitUntil: 'networkidle' }).catch(() => {});
-        await page.waitForSelector('table, tr', { timeout: 10000 }).catch(() => {});
       }
 
-      // 「中にtdが入っているデータ行」に限定して捕捉
+      // 毎ループごとに「最新を表示する」ボタンがあれば能動的にクリックして最新状態に更新
+      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する")').first();
+      if (await refreshBtn.count() > 0 && await refreshBtn.isVisible()) {
+        await refreshBtn.click({ force: true }).catch(() => {});
+        await page.waitForLoadState('networkidle').catch(() => {});
+      }
+
+      // テーブル内のデータ行を捕捉
       const rowsLocator = page.locator('table tr:has(td)');
       const rowCount = await rowsLocator.count();
       
       if (rowCount === 0) {
-        console.log(`⏳ 一覧テーブルデータをロードしています...`);
+        console.log(`⏳ 【監視ログ】テーブルデータをロード中... (チェック回数: ${loopCount})`);
+        await page.waitForTimeout(10000);
         loopCount++;
         continue;
       }
@@ -384,6 +385,7 @@ async function downloadAndPrepareCSV(browser, acc) {
       const cellCount = await cells.count();
 
       if (cellCount < 4) {
+        await page.waitForTimeout(10000);
         loopCount++;
         continue;
       }
@@ -392,7 +394,7 @@ async function downloadAndPrepareCSV(browser, acc) {
       const statusText  = (await cells.nth(2).textContent() || "").trim();
       const detailText  = (await cells.nth(3).textContent() || "").trim();
 
-      // 📢 読み取った最新の行の文字列をリアルタイムに強制出力
+      // 📢 リクエスト日時の下の行の内容を確実にターミナルへ出力
       console.log(`📢 【ヒトマネ最新進捗】日時: ${requestTime} | 状態: [${statusText}] | 詳細: ${detailText}`);
 
       fs.writeFileSync(
@@ -412,6 +414,8 @@ async function downloadAndPrepareCSV(browser, acc) {
         break;
       }
 
+      // ⏱️ 10秒待機
+      await page.waitForTimeout(10000);
       loopCount++;
     }
 

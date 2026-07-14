@@ -112,7 +112,7 @@ function getTargetDates() {
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
-  
+
   return {
     hyphenToday: `${yyyy}/${now.getMonth() + 1}/${now.getDate()}`,
     flatToday: `${yyyy}${mm}${dd}`,
@@ -121,6 +121,7 @@ function getTargetDates() {
 }
 
 function generatePatternFiles(headerLine, targetRows, basePath, accountName, label) {
+
   const idxA = colNameToIndex('A');
   const idxB = colNameToIndex('B');
   const idxC = colNameToIndex('C');
@@ -128,11 +129,13 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
   const idxK = colNameToIndex('K');
 
   const pattern1Rows = targetRows.map(orgRow => {
+
     const row = [...orgRow];
 
     if (row[idxB]) {
       const rawB = row[idxB].replace(/"/g, '').trim();
       const partsB = rawB.split('/');
+
       if (partsB.length === 3) {
         row[idxB] = `2019/${partsB[1]}/${partsB[2]}`;
       }
@@ -141,35 +144,54 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
     if (row[idxC]) {
       const rawC = row[idxC].replace(/"/g, '').trim();
       const partsC = rawC.split('/');
+
       if (partsC.length === 3) {
         row[idxC] = `2020/${partsC[1]}/${partsC[2]}`;
       }
     }
 
     row[idxD] = '非掲載';
+
     return row;
   });
 
-  const path1 = basePath.replace('.csv', `_${label}_pattern1.csv`);
-  const content1 = [headerLine, ...pattern1Rows.map(toCSVLine)].join('\r\n');
 
-  fs.writeFileSync(path1, iconv.encode(content1, 'Shift_JIS'));
+  const path1 = basePath.replace(
+    '.csv',
+    `_${label}_pattern1.csv`
+  );
+
+  const content1 = [
+    headerLine,
+    ...pattern1Rows.map(toCSVLine)
+  ].join('\r\n');
+
+  fs.writeFileSync(
+    path1,
+    iconv.encode(content1, 'Shift_JIS')
+  );
 
   console.log(
     `✅ 【${accountName}】【${label}】パターン1 CSV保存完了(Shift_JIS): ${path1}`
   );
 
+
   const dates = getTargetDates();
 
   const pattern2BaseRows = targetRows.map(orgRow => {
+
     const row = [...orgRow];
 
     if (row[idxA]) {
-      const currentA = row[idxA].replace(/"/g, '').trim();
-      row[idxA] = currentA.replace(
-        /(RB\d{3})\d{8}/,
-        `$1${dates.flatToday}`
-      );
+
+      const currentA =
+        row[idxA].replace(/"/g, '').trim();
+
+      row[idxA] =
+        currentA.replace(
+          /(RB\d{3})\d{8}/,
+          `$1${dates.flatToday}`
+        );
     }
 
     row[idxB] = dates.hyphenToday;
@@ -178,11 +200,22 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
 
     return row;
   });
-    if (pattern2BaseRows.length > 1) {
-    const lastKValue = pattern2BaseRows[pattern2BaseRows.length - 1][idxK];
 
-    for (let i = pattern2BaseRows.length - 1; i > 0; i--) {
-      pattern2BaseRows[i][idxK] = pattern2BaseRows[i - 1][idxK];
+
+  if (pattern2BaseRows.length > 1) {
+
+    const lastKValue =
+      pattern2BaseRows[
+        pattern2BaseRows.length - 1
+      ][idxK];
+
+    for (
+      let i = pattern2BaseRows.length - 1;
+      i > 0;
+      i--
+    ) {
+      pattern2BaseRows[i][idxK] =
+        pattern2BaseRows[i - 1][idxK];
     }
 
     pattern2BaseRows[0][idxK] = lastKValue;
@@ -192,30 +225,41 @@ function generatePatternFiles(headerLine, targetRows, basePath, accountName, lab
     );
   }
 
-  const path2 = basePath.replace('.csv', `_${label}_pattern2.csv`);
-  const content2 = [headerLine, ...pattern2BaseRows.map(toCSVLine)].join('\r\n');
 
-  fs.writeFileSync(path2, iconv.encode(content2, 'Shift_JIS'));
+  const path2 = basePath.replace(
+    '.csv',
+    `_${label}_pattern2.csv`
+  );
+
+  const content2 = [
+    headerLine,
+    ...pattern2BaseRows.map(toCSVLine)
+  ].join('\r\n');
+
+  fs.writeFileSync(
+    path2,
+    iconv.encode(content2, 'Shift_JIS')
+  );
 
   console.log(
     `✅ 【${accountName}】【${label}】パターン2 CSV保存完了(Shift_JIS): ${path2}`
   );
 
-  return { path1, path2 };
+
+  return {
+    path1,
+    path2
+  };
 }
+// Part2
 
 function processCSVFile(filePath, accountName) {
-
   if (!fs.existsSync(filePath)) {
-    console.log(
-      `⚠️ 【${accountName}】ファイルが見つかりません: ${filePath}`
-    );
+    console.log(`⚠️ 【${accountName}】ファイルが見つかりません: ${filePath}`);
     return null;
   }
 
-  console.log(
-    `🛠️ 【${accountName}】CSVの加工処理を開始します...`
-  );
+  console.log(`🛠️ 【${accountName}】CSVの加工処理を開始します...`);
 
   const buffer = fs.readFileSync(filePath);
   const content = iconv.decode(buffer, 'Shift_JIS');
@@ -224,10 +268,8 @@ function processCSVFile(filePath, accountName) {
   const idxGG = colNameToIndex('GG');
   const idxGH = colNameToIndex('GH');
 
-  const {
-    headerLine,
-    rows: allRows
-  } = parseCSVContentRobust(content);
+  const { headerLine, rows: allRows } =
+    parseCSVContentRobust(content);
 
   if (allRows.length === 0) return null;
 
@@ -264,15 +306,18 @@ function processCSVFile(filePath, accountName) {
   });
 
 
-  const normalTargetRows = normalFiltered.slice(0, 3990);
+  const normalTargetRows =
+    normalFiltered.slice(0, 3990);
 
-  const normalFiles = generatePatternFiles(
-    headerLine,
-    normalTargetRows,
-    filePath,
-    accountName,
-    'normal'
-  );
+
+  const normalFiles =
+    generatePatternFiles(
+      headerLine,
+      normalTargetRows,
+      filePath,
+      accountName,
+      'normal'
+    );
 
 
   const pvSorted = [...allRows].sort((x, y) => {
@@ -293,7 +338,8 @@ function processCSVFile(filePath, accountName) {
   });
 
 
-  const pvSliced = pvSorted.slice(0, 3990);
+  const pvSliced =
+    pvSorted.slice(0, 3990);
 
 
   pvSliced.sort((x, y) => {
@@ -310,13 +356,14 @@ function processCSVFile(filePath, accountName) {
   });
 
 
-  const pvFiles = generatePatternFiles(
-    headerLine,
-    pvSliced,
-    filePath,
-    accountName,
-    'pv'
-  );
+  const pvFiles =
+    generatePatternFiles(
+      headerLine,
+      pvSliced,
+      filePath,
+      accountName,
+      'pv'
+    );
 
 
   return {
@@ -326,13 +373,20 @@ function processCSVFile(filePath, accountName) {
 }
 
 
-async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
+
+async function navigateViaMenuOrUrl(
+  page,
+  acc,
+  targetText,
+  targetUrlSegment
+) {
 
   try {
 
-    const menuHoverIcon = page.locator(
-      'li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)'
-    ).first();
+    const menuHoverIcon =
+      page.locator(
+        'li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)'
+      ).first();
 
 
     if (await menuHoverIcon.count() > 0) {
@@ -343,7 +397,9 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
 
 
       const subMenuLink =
-        page.locator(`a:has-text("${targetText}")`).first();
+        page.locator(
+          `a:has-text("${targetText}")`
+        ).first();
 
 
       if (
@@ -353,7 +409,9 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
 
         await subMenuLink.click();
 
-        await page.waitForLoadState('networkidle').catch(() => {});
+        await page.waitForLoadState(
+          'networkidle'
+        ).catch(() => {});
 
         return;
       }
@@ -365,19 +423,32 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
 
 
   const destinationUrl =
-    acc.url.replace('/login/', `/${targetUrlSegment}`);
+    acc.url.replace(
+      '/login/',
+      `/${targetUrlSegment}`
+    );
 
 
-  await page.goto(destinationUrl, {
-    waitUntil: 'networkidle'
-  }).catch(() => {});
+  await page.goto(
+    destinationUrl,
+    {
+      waitUntil: 'networkidle'
+    }
+  ).catch(() => {});
 
 
   await page.waitForTimeout(1500);
 }
 
 
-async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
+
+
+async function uploadSingleFileOnly(
+  page,
+  acc,
+  fileToUpload,
+  label
+) {
 
   console.log(
     `👉 【${acc.name}】[${label}] 募集一覧画面へ移動します...`
@@ -385,12 +456,19 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
 
 
   const recruitUrl =
-    acc.url.replace('/login/', '/rec_recruitments');
+    acc.url.replace(
+      '/login/',
+      '/rec_recruitments'
+    );
 
 
-  await page.goto(recruitUrl, {
-    waitUntil: 'domcontentloaded'
-  }).catch(() => {});
+  await page.goto(
+    recruitUrl,
+    {
+      waitUntil: 'domcontentloaded'
+    }
+  ).catch(() => {});
+
 
 
   console.log(
@@ -399,54 +477,80 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
 
 
   const openModalBtn =
-    page.locator('a:has-text("ファイル取込予約")').first();
+    page.locator(
+      'a:has-text("ファイル取込予約")'
+    ).first();
 
 
-  await openModalBtn.waitFor({
-    state: 'visible',
-    timeout: 10000
-  });
+  await openModalBtn.waitFor(
+    {
+      state: 'visible',
+      timeout: 10000
+    }
+  );
 
 
-  await openModalBtn.click({
-    force: true
-  });
+  await openModalBtn.click(
+    {
+      force: true
+    }
+  );
 
 
   await page.waitForTimeout(2000);
 
 
+
   console.log(
     `📤 【${acc.name}】[${label}] アップロード要素を探索中...`
   );
-    let targetInput = null;
+
+
+  let targetInput = null;
   let activeFrame = null;
 
-  const mainInput = page.locator('input[type="file"]').first();
 
-  if (await mainInput.count() > 0) {
+  const mainInput =
+    page.locator(
+      'input[type="file"]'
+    ).first();
+
+
+  if (
+    await mainInput.count() > 0
+  ) {
+
     targetInput = mainInput;
+
   } else {
 
-    console.log(
-      `🔍 【${acc.name}】[${label}] メインDOMに見つからないため、iframe内をスキャンします...`
-    );
 
-    const frames = page.frames();
+    const frames =
+      page.frames();
 
-    for (const frame of frames) {
+
+    for (
+      const frame of frames
+    ) {
 
       const frameInput =
-        frame.locator('input[type="file"]').first();
+        frame.locator(
+          'input[type="file"]'
+        ).first();
 
-      if (await frameInput.count() > 0) {
+
+      if (
+        await frameInput.count() > 0
+      ) {
 
         targetInput = frameInput;
         activeFrame = frame;
 
+
         console.log(
           `💡 【${acc.name}】[${label}] iframe内で input[type="file"] を検出しました。`
         );
+
 
         break;
       }
@@ -456,44 +560,15 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
 
   if (targetInput) {
 
-    await targetInput.setInputFiles(fileToUpload);
+    await targetInput.setInputFiles(
+      fileToUpload
+    );
+
 
     console.log(
       `✅ 【${acc.name}】[${label}] input要素へのファイル注入に成功しました。`
     );
 
-  } else {
-
-    console.log(
-      `⚠️ 【${acc.name}】[${label}] inputが見つかりません。直接クリックを試みます...`
-    );
-
-    const customUploadBtn =
-      page.locator(
-        'text=ファイルを選択, text=ファイル選択, button:has-text("選択"), .file-upload, .upload-area'
-      ).first();
-
-
-    if (await customUploadBtn.count() > 0) {
-
-      customUploadBtn.click({
-        force: true
-      }).catch(() => {});
-
-    }
-
-
-    const retryInput =
-      page.locator('input[type="file"]').first();
-
-
-    if (await retryInput.count() > 0) {
-
-      await retryInput
-        .setInputFiles(fileToUpload)
-        .catch(() => {});
-
-    }
   }
 
 
@@ -506,6 +581,7 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
 
 
   let targetClickBtn = null;
+
 
   const targetContext =
     activeFrame || page;
@@ -526,39 +602,21 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   ];
 
 
-  for (const selector of universalSelectors) {
+  for (
+    const selector of universalSelectors
+  ) {
 
     const el =
       targetContext.locator(selector).last();
 
 
-    if (await el.count() > 0) {
+    if (
+      await el.count() > 0
+    ) {
 
       targetClickBtn = el;
 
-      console.log(
-        `🎯 セレクター合致によりボタンを捕捉: ${selector}`
-      );
-
       break;
-    }
-  }
-
-
-  if (!targetClickBtn) {
-
-    for (const f of page.frames()) {
-
-      const el =
-        f.locator(':text("ファイル取込予約")').last();
-
-
-      if (await el.count() > 0) {
-
-        targetClickBtn = el;
-
-        break;
-      }
     }
   }
 
@@ -568,21 +626,15 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
     throw new Error(
       "❌ 青い『ファイル取込予約』ボタンを画面上から特定できませんでした。"
     );
-
   }
 
 
-  await targetClickBtn
-    .scrollIntoViewIfNeeded({
-      timeout: 5000
-    })
-    .catch(() => {});
-
-
-  await targetClickBtn.click({
-    force: true,
-    timeout: 15000
-  });
+  await targetClickBtn.click(
+    {
+      force: true,
+      timeout: 15000
+    }
+  );
 
 
   console.log(
@@ -592,22 +644,18 @@ async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
 
   await page.waitForTimeout(30000);
 }
-
+ // Part3
 
 async function downloadAndPrepareCSV(browser, acc) {
 
-  const context =
-    await browser.newContext({
-      viewport: {
-        width: 1280,
-        height: 800
-      }
-    });
+  const context = await browser.newContext({
+    viewport: {
+      width: 1280,
+      height: 800
+    }
+  });
 
-
-  const page =
-    await context.newPage();
-
+  const page = await context.newPage();
 
   page.setDefaultTimeout(0);
 
@@ -623,11 +671,16 @@ async function downloadAndPrepareCSV(browser, acc) {
   });
 
 
+
   try {
 
-    await page.goto(acc.url, {
-      waitUntil: 'networkidle'
-    });
+
+    await page.goto(
+      acc.url,
+      {
+        waitUntil: 'networkidle'
+      }
+    );
 
 
     await page.locator(
@@ -645,17 +698,26 @@ async function downloadAndPrepareCSV(browser, acc) {
     ).first().click();
 
 
-    await page.waitForLoadState('networkidle')
-      .catch(() => {});
+    await page.waitForLoadState(
+      'networkidle'
+    ).catch(() => {});
+
 
 
     const recruitUrl =
-      acc.url.replace('/login/', '/rec_recruitments');
+      acc.url.replace(
+        '/login/',
+        '/rec_recruitments'
+      );
 
 
-    await page.goto(recruitUrl, {
-      waitUntil: 'networkidle'
-    });
+    await page.goto(
+      recruitUrl,
+      {
+        waitUntil: 'networkidle'
+      }
+    );
+
 
 
     console.log(
@@ -669,22 +731,27 @@ async function downloadAndPrepareCSV(browser, acc) {
       ).first();
 
 
-    await exportBtn.waitFor({
-      state: 'visible',
-      timeout: 30000
-    });
+    await exportBtn.waitFor(
+      {
+        state: 'visible',
+        timeout: 30000
+      }
+    );
 
 
-    await exportBtn.click({
-      force: true
-    });
+    await exportBtn.click(
+      {
+        force: true
+      }
+    );
 
 
     await page.waitForTimeout(8000);
 
 
+
     const historySegment =
-      (acc.name === 'B')
+      acc.name === 'B'
         ? "csv_export_queues"
         : "rec_export_histories";
 
@@ -702,143 +769,309 @@ async function downloadAndPrepareCSV(browser, acc) {
     );
 
 
+
     console.log(
-      `⏳ 【${acc.name}】CSV抽出監視中`
+      `⏳ 【${acc.name}】CSV抽出の完了を監視中...`
     );
 
+
+    const watchStartTime = Date.now();
 
     let lastLogTime = 0;
 
 
+
     while (true) {
 
-      try {
 
-        const firstRow =
-          page.locator('tbody tr').first();
-
-
-        const cells =
-          await firstRow.locator('td').all();
-
-
-        if (cells.length >= 4) {
-
-          const statusText =
-            (await cells[2].textContent() || "")
-              .trim();
-
-
-          const detailText =
-            (await cells[3].textContent() || "")
-              .trim();
+      await page.waitForTimeout(1000);
 
 
 
-          const now =
-            Date.now();
+      const rows =
+        await page.locator(
+          'table tr, .table tr, tbody tr'
+        ).all();
 
 
 
-          if (now - lastLogTime >= 10000) {
-
-            console.log(
-              `⏳ 【${acc.name}】CSV抽出監視中\nステータス：${statusText}\n詳細：${detailText}`
-            );
+      let statusText = "";
+      let detailText = "";
+      let isDataLoaded = false;
 
 
-            lastLogTime = now;
+
+      if (rows.length > 1) {
+
+
+        const latestRow = rows[1];
+
+
+        const rowText =
+          (
+            await latestRow.textContent()
+          || ""
+          ).replace(/\s+/g, " ").trim();
+
+
+
+        if (rowText) {
+
+
+          isDataLoaded = true;
+
+
+          const cells =
+            await latestRow.locator('td').all();
+
+
+
+          if (cells.length >= 3) {
+
+
+            statusText =
+              (
+                await cells[2].textContent()
+              || ""
+              ).replace(/\s+/g, " ").trim();
+
 
           }
 
 
-
-          if (statusText === '完了') {
-
-            console.log(
-              `✅ 【${acc.name}】CSV生成完了を確認しました。`
-            );
+          if (cells.length >= 4) {
 
 
-            break;
+            detailText =
+              (
+                await cells[3].textContent()
+              || ""
+              ).replace(/\s+/g, " ").trim();
+
+          } else {
+
+            detailText = rowText;
 
           }
 
         }
 
+      }
 
-      } catch (e) {
+
+
+      const now =
+        Date.now();
+
+
+
+      // 10秒ごとに必ず進捗表示
+
+      if (
+        now - lastLogTime >= 10000
+      ) {
+
+
+        lastLogTime = now;
+
+
+
+        let progressText = detailText;
+
+
+
+        const match =
+          detailText.match(
+            /(\d+)\s*\/\s*(\d+)件/
+          );
+
+
+
+        if (match) {
+
+
+          const current =
+            Number(match[1]);
+
+
+          const total =
+            Number(match[2]);
+
+
+
+          const percent =
+            (
+              current / total * 100
+            ).toFixed(1);
+
+
+
+          const elapsed =
+            (
+              Date.now() - watchStartTime
+            ) / 1000;
+
+
+
+          const totalTime =
+            elapsed / current * total;
+
+
+
+          const remain =
+            Math.max(
+              0,
+              totalTime - elapsed
+            );
+
+
+
+          const min =
+            Math.floor(
+              remain / 60
+            );
+
+
+          const sec =
+            Math.floor(
+              remain % 60
+            );
+
+
+
+          progressText =
+            `${current}/${total}件出力中 残り約${min}分${sec}秒 (${percent}%)`;
+
+        }
+
+
+
+        console.log(
+          `⏳ 【${acc.name}】状態:[${statusText}] ${progressText}`
+        );
+
 
       }
 
 
-      await page.waitForTimeout(1000);
+
+      const cleanStatus =
+        statusText.replace(/\s+/g, "");
+
+
+
+      const cleanDetail =
+        detailText.replace(/\s+/g, "");
+
+
+
+      if (
+        cleanStatus.includes("キャンセル") ||
+        cleanDetail.includes("キャンセル")
+      ) {
+
+        throw new Error(
+          "管理画面側でリクエストがキャンセルされました"
+        );
+
+      }
+
+
+
+      // 待機中 → 進行中 → 完了
+
+      const isCompleted =
+        cleanStatus.includes("完了") ||
+        cleanStatus.includes("成功") ||
+        cleanDetail.includes("rec_recruitments") ||
+        cleanDetail.includes(".csv");
+
+
+
+      if (
+        isDataLoaded &&
+        isCompleted
+      ) {
+
+
+        console.log(
+          `✅ 【${acc.name}】CSV生成完了を確認しました`
+        );
+
+
+        break;
+
+      }
+
+
+
+      const refreshBtn =
+        page.locator(
+          'a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する"), a:has-text("更新"), button:has-text("更新")'
+        ).first();
+
+
+
+      if (
+        await refreshBtn.count() > 0
+      ) {
+
+        await refreshBtn.click(
+          {
+            force: true
+          }
+        ).catch(() => {});
+
+      }
+
 
     }
 
 
+
     console.log(
-      `👉 【${acc.name}】ダウンロードリンクを捕捉します...`
+      `👉 【${acc.name}】ダウンロードリンク確認`
     );
 
 
     await page.waitForTimeout(2000);
 
 
-    const finalRows =
-      await page.locator(
-        'table tr, .table tr, tbody tr'
-      ).all();
+
+    const downloadLink =
+      page.locator(
+        'a[href*=".csv"], a:has-text("ダウンロード")'
+      ).first();
 
 
-    let downloadLink = null;
 
-
-    if (finalRows.length > 1) {
-
-      const targetRow =
-        finalRows[1];
-
-
-      downloadLink =
-        targetRow.locator(
-          'a[href*=".csv"], a:has-text("ダウンロード"), td a, td button'
-        ).first();
-
-    }
-
-
-    if (!downloadLink ||
-        (await downloadLink.count()) === 0) {
-
-      downloadLink =
-        page.locator(
-          'a[href*=".csv"], a:has-text("ダウンロード")'
-        ).first();
-
-    }
-
-
-    if (!downloadLink ||
-        (await downloadLink.count()) === 0) {
+    if (
+      await downloadLink.count() === 0
+    ) {
 
       throw new Error(
-        "CSV of download link cannot be specified."
+        "CSVダウンロードリンクがありません"
       );
 
     }
 
 
+
     const [download] =
       await Promise.all([
 
-        page.waitForEvent('download'),
+        page.waitForEvent(
+          'download'
+        ),
 
-        downloadLink.click({
-          force:true
-        })
+        downloadLink.click(
+          {
+            force:true
+          }
+        )
 
       ]);
+
 
 
     const downloadPath =
@@ -848,12 +1081,17 @@ async function downloadAndPrepareCSV(browser, acc) {
       );
 
 
-    await download.saveAs(downloadPath);
+
+    await download.saveAs(
+      downloadPath
+    );
+
 
 
     console.log(
-      `✅ 【${acc.name}】RAWデータのダウンロード・保存に成功しました！`
+      `✅ 【${acc.name}】RAWデータ保存完了`
     );
+
 
 
     const processed =
@@ -863,14 +1101,6 @@ async function downloadAndPrepareCSV(browser, acc) {
       );
 
 
-    if (!processed) {
-
-      throw new Error(
-        "CSVデータの加工に失敗しました。"
-      );
-
-    }
-
 
     return {
       page,
@@ -878,18 +1108,12 @@ async function downloadAndPrepareCSV(browser, acc) {
       processed
     };
 
+  } catch(error) {
 
-  } catch (error) {
 
     console.log(
-      `⚠️ 【${acc.name}】準備処理中にエラーが発生: ${error.message}`
+      `⚠️ 【${acc.name}】準備処理中エラー: ${error.message}`
     );
-
-
-    await page.screenshot({
-      path:`error_prepare_${acc.name}.png`,
-      fullPage:true
-    });
 
 
     await context.close();

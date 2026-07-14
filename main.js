@@ -370,66 +370,80 @@ async function downloadAndPrepareCSV(browser, acc) {
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中... (10秒インターバル監視)`);
 
+    // 🔄 HTML構造に依存せず、画面全体の文字要素から現在のステータスを追うロジック
     while (true) {
       await page.waitForTimeout(10000);
 
       try {
-        const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
-        if (await refreshBtn.count() > 0) {
-          await refreshBtn.click({ force: true }).catch(() => {});
-          await page.waitForTimeout(1500);
+        const pageText = await page.evaluate(() => document.body.innerText || "");
+        const lines = pageText.split('\n').map(l => l.trim()).filter(Boolean);
+
+        let isCompleted = false;
+        let statusFound = false;
+
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes('リクエスト日時') && lines[i].includes('データ種別')) {
+            const scanArea = lines.slice(i + 1, i + 8).join(' ');
+
+            // 【超重要】「キャンセル」の判定を最優先に行います
+            // 進行中の『残り約17分40秒 キャンセル』という文字を巻き込まないよう、
+            // 「進行中」の文字がなく、単一で「キャンセル」と表示されている状態を厳密にチェックします。
+            if (scanArea.includes('キャンセル') && !scanArea.includes('出力中') && !scanArea.includes('進行中')) {
+              throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
+            }
+            
+            // 進行中・完了・待機中の判定
+            if (scanArea.includes('完了') || scanArea.includes('.csv')) {
+              console.log(`✅ 【${acc.name}】CSVの生成完了を確認しました！`);
+              statusFound = true;
+              isCompleted = true;
+              break;
+            } else if (scanArea.includes('進行中') || scanArea.includes('出力中')) {
+              // ⚙️ 件数および残り時間（例: "1800/30348件出力中 残り約16分39秒" など）を柔軟に抽出する正規表現
+              const matchDetail = scanArea.match(/\d+\/\d+件(出力中|進行中)[^\s]*/);
+              let detailLog = '';
+              if (matchDetail) {
+                detailLog = ` (${matchDetail[0]})`;
+              } else {
+                // 部分的にマッチさせるフォールバック
+                const progressMatch = scanArea.match(/\d+\/\d+件/);
+                const timeMatch = scanArea.match(/残り約[^\s]+/);
+                if (progressMatch) {
+                  detailLog = ` (${progressMatch[0]}出力中${timeMatch ? ' ' + timeMatch[0] : ''})`;
+                }
+              }
+              
+              console.log(`⚙️ 【${acc.name}】現在のステータス: [進行中]${detailLog}`);
+              statusFound = true;
+              break; 
+            } else if (scanArea.includes('待機中')) {
+              console.log(`⏳ 【${acc.name}】現在のステータス: [待機中] (実行までしばらくお待ち下さい)`);
+              statusFound = true;
+              break; 
+            }
+          }
         }
 
-        // 🎯 ヘッダー(th)を無視し、純粋な最初の「データ行(tdを持つtr)」を厳密に捕捉
-        const firstDataRow = page.locator('table.table tr:has(td), table tr:has(td)').first();
-        if (await firstDataRow.count() === 0) {
-          console.log(`❓ 【${acc.name}】テーブルデータ行が見つかりません。リロードを待ちます...`);
-          continue;
+        // 「完了」ステータスをしっかり掴んだ時だけ監視ループをブレイクして次へ進む
+        if (isCompleted) {
+          break;
         }
 
-        const rowText = await firstDataRow.innerText().catch(() => "");
-        
-        // 空白行を掴んでしまった場合の安全対策
-        if (!rowText || rowText.trim().length < 5) {
-          console.log(`❓ 【${acc.name}】読み込んだデータが空、または短すぎます。リロードします...`);
-          continue;
+        if (!statusFound) {
+          console.log(`❓ 【${acc.name}】ステータス文字が特定できません。自動リロードを待ちます...`);
         }
-
-        if (rowText.includes('完了') || rowText.includes('.csv')) {
-          console.log(`✅ 【${acc.name}】CSVの生成完了を確認しました！`);
-          break; 
-        } 
-        
-        if (rowText.includes('進行中')) {
-          const matchDetail = rowText.match(/\d+\/\d+件出力中\s*残り約\d+分\d+秒/);
-          const fallbackMatch = matchDetail ? matchDetail[0] : (rowText.match(/\d+\/\d+件出力中/) ? rowText.match(/\d+\/\d+件出力中/)[0] : '');
-          const detailLog = fallbackMatch ? ` (${fallbackMatch})` : '';
-          
-          console.log(`⚙️ 【${acc.name}】現在のステータス: [進行中]${detailLog}`);
-          continue;
-        } 
-        
-        if (rowText.includes('待機中')) {
-          console.log(`⏳ 【${acc.name}】現在のステータス: [待機中] (実行までしばらくお待ち下さい)`);
-          continue;
-        } 
-        
-        if (rowText.includes('処理がキャンセルされました') || (rowText.includes('キャンセル') && !rowText.includes('進行中') && !rowText.includes('待機中'))) {
-          throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
-        }
-
-        // 🔍 判定漏れが発生した際、実際に1行目から何が見えているのかを開発ログに完全出力
-        console.log(`❓ 【${acc.name}】ステータスを判定できませんでした。1行目の生データ: [${rowText.replace(/\n/g, ' ')}]`);
 
       } catch (e) {
+        // キャンセルエラーの場合はそのまま上位のcatchへ投げる
         if (e.message.includes('キャンセル')) throw e;
-        console.log(`⚠️ 【${acc.name}】監視ループ内で一時的なエラー: ${e.message}`);
+        console.log(`⚠️ 【${acc.name}】監視ループ内で一時的なエラー（自動リロードと重複）: ${e.message}`);
       }
     }
 
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
+    // 確実に対象行のダウンロードリンク・ボタンをクリックする
     let downloadLink = page.locator('table tr:has(td) a[href*=".csv"], table tr:has(td) a:has-text("ダウンロード"), td a, td button').first();
 
     if (!downloadLink || (await downloadLink.count()) === 0) {
@@ -442,6 +456,7 @@ async function downloadAndPrepareCSV(browser, acc) {
 
     console.log(`👉 【${acc.name}】ダウンロードを開始します...`);
     
+    // タイムアウトを回避するため、保存イベントとクリックを同時に走らせる
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: 60000 }), 
       downloadLink.click({ force: true })
@@ -482,6 +497,7 @@ async function executePvSet(page, acc, processed) {
   const counterPath = path.join(__dirname, 'counter.json');
   let counterData = { count: 0 };
 
+  // カウンター読み込み
   try {
     if (fs.existsSync(counterPath)) {
       counterData = JSON.parse(fs.readFileSync(counterPath, 'utf8'));
@@ -492,6 +508,8 @@ async function executePvSet(page, acc, processed) {
   }
 
   const rotation = ['A_NORMAL', 'A_PV', 'B_NORMAL', 'B_PV'];
+  
+  // 現在のインデックスから状態を決定
   const index = counterData.count % rotation.length;
   const currentState = rotation[index];
 
@@ -534,6 +552,7 @@ async function executePvSet(page, acc, processed) {
   } finally {
     await browser.close();
 
+    // 成功・失敗に関わらず、次回用に必ずカウントを進めて保存する
     counterData.count = (index + 1) % rotation.length;
     
     try {

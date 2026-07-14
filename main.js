@@ -371,9 +371,14 @@ async function downloadAndPrepareCSV(browser, acc) {
     let loopCount = 1;
 
     while (true) {
-      await page.waitForTimeout(5000);
-      
-      // 🎯 【最上行強制監視】ヘッダー(0番目)のすぐ下にある「最新データ行(1番目)」のみを決め打ちで取得
+      // 🔄 画面上の「最新を表示する」ボタンをクリックしてHTMLを最新にする
+      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する")').first();
+      if (await refreshBtn.count() > 0) {
+        await refreshBtn.click({ force: true });
+        await page.waitForTimeout(1500); // 反映待ち
+      }
+
+      // 🎯 最新のデータ行（ヘッダーのすぐ下の実質1行目）を強制ターゲット
       const latestRow = page.locator('table tr').nth(1);
       
       let statusText = "";
@@ -403,12 +408,13 @@ async function downloadAndPrepareCSV(browser, acc) {
         console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${displayStatus}] ${displayDetail}`);
       }
       loopCount++;
+      await page.waitForTimeout(5000);
     }
 
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    // ダウンロード時も最新行（上から2番目のtr）から確実にリンクを取得
+    // 確実に対象行のリフレッシュとリンク捕捉を行う
     const finalLatestRow = page.locator('table tr').nth(1);
     let downloadLink = null;
     if (await finalLatestRow.count() > 0) {

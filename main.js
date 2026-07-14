@@ -377,29 +377,58 @@ async function downloadAndPrepareCSV(browser, acc) {
       // ⏱️ 10秒待機
       await page.waitForTimeout(10000);
 
-      const currentUrl = page.url();
-      
-      // 💡 エラー画面（404等）に落ちていた場合のガード処理
-      if (currentUrl.includes('errors/notfounds') || currentUrl.includes('error')) {
-        console.log(`⚠️ 【監視ログ】現在エラー画面です。復旧を待つためページを再読み込みします... (チェック回数: ${loopCount})`);
-        await page.reload({ waitUntil: 'networkidle' }).catch(() => {});
-        
-        // リロードしてもエラー画面のままなら次のループへ
-        if (page.url().includes('errors/notfounds') || page.url().includes('error')) {
-          loopCount++;
-          continue;
-        }
-      }
+     const currentUrl = page.url();
+console.log(`🌐 【監視ログ】現在URL: ${currentUrl}`);
+
+// 404・エラー画面に飛ばされた場合はリロードではなく一覧へ戻る
+if (
+  currentUrl.includes('errors/notfounds') ||
+  currentUrl.includes('error')
+) {
+  console.log(`⚠️ 【監視ログ】エラー画面を検出しました。取出ファイル一覧へ戻ります...`);
+
+  await navigateViaMenuOrUrl(
+    page,
+    acc,
+    "取出ファイル一覧",
+    "rec_export_histories"
+  );
+
+  await page.waitForTimeout(2000);
+
+  console.log(`🌐 【監視ログ】復帰後URL: ${page.url()}`);
+
+  if (
+    page.url().includes('errors/notfounds') ||
+    page.url().includes('error')
+  ) {
+    console.log(`⚠️ 【監視ログ】まだ復帰できません。次回チェックまで待機します。`);
+    loopCount++;
+    continue;
+  }
+}
 
       // 🔄 通常画面であれば「最新を表示する」ボタンをクリックしてテーブルを能動的に更新する
-      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する")').first();
-      if (await refreshBtn.count() > 0 && await refreshBtn.isVisible()) {
-        await refreshBtn.click({ force: true }).catch(() => {});
-        await page.waitForLoadState('networkidle').catch(() => {});
-      } else {
-        // ボタンが見つからないか押せない場合は安全のためページ自体をリロード
-        await page.reload({ waitUntil: 'networkidle' }).catch(() => {});
-      }
+    const refreshBtn = page.locator(
+  'a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する")'
+).first();
+
+if (await refreshBtn.count() > 0 && await refreshBtn.isVisible()) {
+  console.log("🔄 最新を表示する をクリック");
+  await refreshBtn.click({ force: true }).catch(() => {});
+  await page.waitForLoadState('networkidle').catch(() => {});
+} else {
+  console.log("⚠️ 更新ボタンが見つからないため一覧へ戻ります");
+
+  await navigateViaMenuOrUrl(
+    page,
+    acc,
+    "取出ファイル一覧",
+    "rec_export_histories"
+  );
+
+  await page.waitForTimeout(2000);
+}
 
       // データテーブルの行を全走査
       const rows = await page.locator('table tr').all();

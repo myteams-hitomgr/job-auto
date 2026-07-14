@@ -374,46 +374,51 @@ async function downloadAndPrepareCSV(browser, acc) {
     // 取出ボタンクリック後の待機時間を10秒に調整
     await page.waitForTimeout(10000);
 
-    console.log(`👉 【${acc.name}】取出ファイル一覧画面へ安全に移動します...`);
-    await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
-
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を【10秒サイクル】で監視開始します...`);
     let loopCount = 1;
     const watchStartTime = Date.now(); 
 
-    while (true) {
-      // ⏱️ 10秒待機
-      await page.waitForTimeout(10000);
+   while (true) {
 
-     const currentUrl = page.url();
-console.log(`🌐 【監視ログ】現在URL: ${currentUrl}`);
+  await page.waitForTimeout(10000);
 
-// 404・エラー画面に飛ばされた場合はリロードではなく一覧へ戻る
-if (
-  currentUrl.includes('errors/notfounds') ||
-  currentUrl.includes('error')
-) {
-  console.log(`⚠️ 【監視ログ】エラー画面を検出しました。取出ファイル一覧へ戻ります...`);
+  const row = page.locator('table tbody tr').first();
 
-  await navigateViaMenuOrUrl(
-    page,
-    acc,
-    "取出ファイル一覧",
-    "rec_export_histories"
-  );
-
-  await page.waitForTimeout(2000);
-
-  console.log(`🌐 【監視ログ】復帰後URL: ${page.url()}`);
-
-  if (
-    page.url().includes('errors/notfounds') ||
-    page.url().includes('error')
-  ) {
-    console.log(`⚠️ 【監視ログ】まだ復帰できません。次回チェックまで待機します。`);
+  if (await row.count() === 0) {
+    console.log(`⏳ 一覧がまだありません (${loopCount})`);
     loopCount++;
     continue;
   }
+
+  const cells = row.locator('td');
+
+  const requestTime = ((await cells.nth(0).textContent()) || '').trim();
+  const statusText  = ((await cells.nth(2).textContent()) || '').trim();
+  const detailText  = ((await cells.nth(3).textContent()) || '').trim();
+
+  console.log(
+    `⏳ ${requestTime} | ${statusText} | ${detailText}`
+  );
+
+  if (
+    statusText.includes('キャンセル') ||
+    detailText.includes('キャンセル')
+  ) {
+    throw new Error('CSV取出がキャンセルされました。');
+  }
+
+  if (
+    statusText.includes('完了') ||
+    statusText.includes('成功') ||
+    detailText.includes('rec_recruitments')
+  ) {
+
+    console.log(`✅ CSV生成完了`);
+
+    break;
+  }
+
+  loopCount++;
 }
 
       // 🔄 通常画面であれば「最新を表示する」ボタンをクリックしてテーブルを能動的に更新する

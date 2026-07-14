@@ -372,94 +372,83 @@ async function downloadAndPrepareCSV(browser, acc) {
     const watchStartTime = Date.now(); 
     let lastLogTime = 0;
 
-while (true) {
+    while (true) {
+      console.log(`🔄 while開始 (ループ回数: ${loopCount})`);
+      
+      // システム側の自動更新を考慮して5秒待機（page.reloadは行わない）
+      await page.waitForTimeout(5000);
 
-    console.log("🔄 while開始");
+      console.log("現在のURL:", page.url());
 
-    await page.waitForTimeout(5000);
+      const rowCount = await page.locator("table tbody tr").count();
+      console.log("① 行数=" + rowCount);
 
-    console.log("URL=", page.url());
+      if (rowCount === 0) {
+        console.log("まだ取得できません（テーブルに行が存在しません）");
+        loopCount++;
+        continue;
+      }
 
-    const frames = page.frames();
-    console.log("iframe数=", frames.length);
+      const latestRow = page.locator("table tbody tr").first();
+      const cells = latestRow.locator("td"); // 💡 重複宣言を修正
 
-    for (const frame of frames) {
-        console.log("FRAME=", frame.url());
-    }
+      if (await cells.count() < 4) {
+        console.log("テーブルの列数が足りません。完了を待ちます。");
+        loopCount++;
+        continue;
+      }
 
-    console.log("table数=", await page.locator("table").count());
-    console.log("tbody数=", await page.locator("tbody").count());
-    console.log("tr数=", await page.locator("tr").count());
-    console.log("td数=", await page.locator("td").count());
+      const requestTime = (await cells.nth(0).textContent() || "").trim();
+      const statusText  = (await cells.nth(2).textContent() || "").trim();
+      const detailText  = (await cells.nth(3).textContent() || "").trim();
 
-    fs.writeFileSync(
+      fs.writeFileSync(
         `debug_${acc.name}.html`,
         await page.content(),
         "utf8"
-    );
+      );
 
-    const rowCount = await page.locator("table tbody tr").count();
-    console.log("② 行数=" + rowCount);
-
-    if (rowCount === 0) {
-        console.log("まだ取得できません");
-        continue;
-    }
-
-    const latestRow = page.locator("table tbody tr").first();
-
-    const cells = latestRow.locator("td");
-
-const cells = latestRow.locator('td');
-
-const requestTime = (await cells.nth(0).textContent() || "").trim();
-const statusText  = (await cells.nth(2).textContent() || "").trim();
-const detailText  = (await cells.nth(3).textContent() || "").trim();
-
-if (
-    statusText.includes('完了') ||
-    statusText.includes('成功') ||
-    detailText.includes('rec_recruitments')
-  ) {
-    console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
-    break;
-  }
-
-  const now = Date.now();
-
-if (now - lastLogTime >= 10000) {
-    lastLogTime = now;
-    let displayDetail = detailText || "...";
-
-    const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
-
-    if (match) {
-      const currentCount = parseInt(match[1], 10);
-      const totalCount = parseInt(match[2], 10);
-
-      if (currentCount > 0 && totalCount > 0) {
-        const elapsed = (Date.now() - watchStartTime) / 1000;
-        const percent = ((currentCount / totalCount) * 100).toFixed(1);
-        const estimatedTotalTime = (elapsed / currentCount) * totalCount;
-        const remaining = Math.max(0, estimatedTotalTime - elapsed);
-
-        const rMin = Math.floor(remaining / 60);
-        const rSec = Math.floor(remaining % 60);
-
-        displayDetail = `${currentCount}/${totalCount}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
+      if (
+        statusText.includes('完了') ||
+        statusText.includes('成功') ||
+        detailText.includes('rec_recruitments')
+      ) {
+        console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
+        break;
       }
+
+      const now = Date.now();
+      if (now - lastLogTime >= 10000) {
+        lastLogTime = now;
+        let displayDetail = detailText || "...";
+
+        const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
+        if (match) {
+          const currentCount = parseInt(match[1], 10);
+          const totalCount = parseInt(match[2], 10);
+
+          if (currentCount > 0 && totalCount > 0) {
+            const elapsed = (Date.now() - watchStartTime) / 1000;
+            const percent = ((currentCount / totalCount) * 100).toFixed(1);
+            const estimatedTotalTime = (elapsed / currentCount) * totalCount;
+            const remaining = Math.max(0, estimatedTotalTime - elapsed);
+
+            const rMin = Math.floor(remaining / 60);
+            const rSec = Math.floor(remaining % 60);
+
+            displayDetail = `${currentCount}/${totalCount}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
+          }
+        }
+
+        console.log(`⏳ 【${acc.name}】 ${requestTime} | [${statusText}] ${displayDetail}`);
+      }
+
+      loopCount++;
     }
-
-    console.log(`⏳ 【${acc.name}】 ${requestTime} | [${statusText}] ${displayDetail}`);
-  }
-
-  loopCount++;
-}
 
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    // ダウンロード時も「リクエスト日時」直下の最初の行からリンクを確定
     const finalLatestRow = page.locator('table tbody tr, table tr:has(td)').first();
     let downloadLink = null;
     

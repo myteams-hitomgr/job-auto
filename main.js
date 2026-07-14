@@ -364,64 +364,52 @@ async function downloadAndPrepareCSV(browser, acc) {
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
-    console.log(`👉 【${acc.name}】上部メニューの矢印ボタンにマウスを乗せます...`);
-    await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
+    const historySegment = (acc.name === 'B') ? "csv_export_queues" : "rec_export_histories";
+    console.log(`👉 【${acc.name}】「取出ファイル一覧」画面へ移動します... (${historySegment})`);
+    await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", historySegment);
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
 
+    // 🔄 画面の自動リロードに追従して1行目のデータセルだけを監視するループ
     while (true) {
-      await page.waitForTimeout(5000);
-      const rows = await page.locator('table tr').all();
-      let statusText = "";
-      let detailText = "";
+      try {
+        // ヘッダー(th)の行を完全にスルーし、データ(td)を持つ「最初のデータ行」を特定
+        const firstDataRow = page.locator('table tr:has(td)').first();
+        await firstDataRow.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
 
-      for (const row of rows) {
-        const cells = await row.locator('td').all();
+        const cells = await firstDataRow.locator('td').all();
         if (cells.length >= 4) {
-          const dateText = await cells[0].evaluate(el => el.textContent || "");
-          if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
-            statusText = (await cells[2].evaluate(el => el.textContent || "")).trim();
-            detailText = (await cells[3].evaluate(el => el.textContent || "")).trim();
-            break;
+          const statusText = (await cells[2].textContent() || "").trim();
+          const detailText = (await cells[3].textContent() || "").trim();
+
+          // 3ステータスの判定・出力
+          if (statusText === '待機中') {
+            console.log(`⏳ 【${acc.name}】現在のステータス: [待機中]`);
+          } else if (statusText === '進行中') {
+            console.log(`⚙️ 【${acc.name}】現在のステータス: [進行中] ${detailText}`);
+          } else if (statusText === '完了') {
+            console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
+            break; 
+          } else if (statusText.includes('キャンセル') || detailText.includes('キャンセル')) {
+            throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
           }
         }
+      } catch (e) {
+        // 自動リロードと重なり要素が掴めなかった際のエラー対策
       }
 
-      if (statusText.includes('キャンセル') || detailText.includes('キャンセル')) {
-        throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
-      }
-
-      // 「完了」ステータスの判定
-      if (statusText === '完了') {
-        console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
-        break;
-      }
-      
-      // 「待機中」または「進行中」のコンソール出力
-      if (statusText === '待機中') {
-        console.log(`⏳ 【${acc.name}】現在のステータス: [待機中]`);
-      } else if (statusText === '進行中') {
-        console.log(`⚙️ 【${acc.name}】現在のステータス: [進行中] ${detailText}`);
-      }
+      // 5秒待機（画面の勝手な自動リロードをそのまま待ちます）
+      await page.waitForTimeout(5000);
     }
 
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    const finalRows = await page.locator('table tr').all();
-    let downloadLink = null;
-    for (const row of finalRows) {
-      const cells = await row.locator('td').all();
-      if (cells.length >= 4) {
-        const dateText = await cells[0].evaluate(el => el.textContent || "");
-        if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
-          downloadLink = row.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
-          break;
-        }
-      }
-    }
+    // データ1行目からダウンロードリンクを確実に取得
+    const targetRow = page.locator('table tr:has(td)').first();
+    let downloadLink = targetRow.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
 
-    if (!downloadLink) {
+    if (!downloadLink || (await downloadLink.count()) === 0) {
       throw new Error("CSV of download link cannot be specified.");
     }
 

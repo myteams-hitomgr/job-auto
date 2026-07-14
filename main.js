@@ -1,6 +1,4 @@
 const { chromium } = require('playwright');
-const fs = require('fs');
-const path = require('path');
 
 const accounts = [
   { 
@@ -16,66 +14,81 @@ const accounts = [
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
-  
-  const acc = accounts[0]; // 今回ループで止まっているBアカウントで検証します
+  const acc = accounts[0];
 
   try {
-    console.log('👉 ログインしています...');
+    console.log('👉 ログイン中...');
     await page.goto(acc.url, { waitUntil: 'networkidle' }); 
     await page.locator('input[type="text"], input[type="email"], input[name*="login"]').first().fill(acc.id);
     await page.locator('input[type="password"]').first().fill(acc.password);
     await page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    console.log('👉 取出ファイル一覧画面（履歴画面）へ直接移動します...');
+    console.log('👉 取出ファイル一覧画面へ直接移動...');
     const targetUrl = acc.url.replace('/login/', '/rec_export_histories');
     await page.goto(targetUrl, { waitUntil: 'networkidle' });
-    await page.waitForTimeout(5000); // 画面が完全に描画されるまで少し長めに待ちます
+    await page.waitForTimeout(5000); // 描画待ち
 
-    console.log('📸 現在の画面の状態を「目で見るため」にパシャリと撮影します...');
+    console.log('📸 スクショ保存...');
     await page.screenshot({ path: 'check_view.png', fullPage: true });
 
-    console.log('📝 画面上にあるすべての「表（テーブル）」の文字を丸裸にします...');
+    console.log('📝 画面上の全テーブル構造をログへ直接出力します...');
     
-    const tableDump = await page.evaluate(() => {
-      const report = [];
-      const allTables = document.querySelectorAll('table');
+    // --- ここから追加ロジック ---
+    // メインページおよびすべての iframe を含めて走査対象にする
+    const allFrames = page.frames();
+    console.log(`ℹ️ 検出されたフレーム総数: ${allFrames.length}`);
+
+    for (let fIdx = 0; fIdx < allFrames.length; fIdx++) {
+      const frame = allFrames[fIdx];
+      const frameName = frame.name() || `index:${fIdx}`;
+      const frameUrl = frame.url();
       
-      report.push(`【検証結果】画面内に合計 [ ${allTables.length} 個 ] のテーブルが見つかりました。\n`);
-      
-      allTables.forEach((table, tIdx) => {
-        report.push(`--------------------------------------------------`);
-        report.push(` 🏢 テーブル No.${tIdx + 1} (外側の文字やClass: ${table.className || 'なし'})`);
-        report.push(`--------------------------------------------------`);
+      console.log(`\n==================================================`);
+      console.log(`🖼️ 【フレーム】 Name: ${frameName} | URL: ${frameUrl}`);
+      console.log(`==================================================`);
+
+      // 指定フレーム内のすべての <table> 要素を取得
+      const tables = await frame.$$('table');
+      console.log(`📊 検出されたテーブル数: ${tables.length}`);
+
+      if (tables.length === 0) {
+        console.log('（このフレーム内に table タグはありません）');
+        continue;
+      }
+
+      for (let tIdx = 0; tIdx < tables.length; tIdx++) {
+        console.log(`\n--- 📥 [テーブル番号: ${tIdx + 1}] ---`);
         
-        const rows = table.querySelectorAll('tr');
-        rows.forEach((row, rIdx) => {
-          const cells = row.querySelectorAll('th, td');
-          const cellTexts = Array.from(cells).map((c, cIdx) => `[列${cIdx + 1}: ${c.textContent?.trim() || '(空文字)'}]`);
-          
-          if (cellTexts.length > 0) {
-            report.push(`  └ 行 ${rIdx + 1}: ${cellTexts.join(' | ')}`);
+        // 行（tr）をすべて取得
+        const rows = await tables[tIdx].$$('tr');
+        if (rows.length === 0) {
+          console.log('  (行が存在しません)');
+          continue;
+        }
+
+        for (let rIdx = 0; rIdx < rows.length; rIdx++) {
+          // 行内の セル（th または td）をすべて取得
+          const cells = await rows[rIdx].$$('th, td');
+          let rowTextParts = [];
+
+          for (let cIdx = 0; cIdx < cells.length; cIdx++) {
+            const rawText = await cells[cIdx].innerText();
+            // ログの視認性を上げるため、改行やトリムを処理
+            const cleanText = rawText.replace(/\r?\n/g, ' ').trim() || '(空文字)';
+            rowTextParts.push(`[列${cIdx + 1}: ${cleanText}]`);
           }
-        });
-        report.push(`\n`);
-      });
-      
-      return report.join('\n');
-    });
 
-    // テキストファイルに書き出し
-    const logPath = path.join(__dirname, 'check_result.txt');
-    fs.writeFileSync(logPath, tableDump, 'utf8');
-    
-    console.log(`\n============== 調査完了 ==============`);
-    console.log(`📁 同じフォルダに以下のファイルが書き出されました。`);
-    console.log(`  1. check_result.txt  <-- 表の何行目に何の文字がいるかの全データ`);
-    console.log(`  2. check_view.png    <-- Playwrightが本当に開いている画面の証拠スクショ`);
-    console.log(`======================================`);
-    console.log(`「check_result.txt」の最初の方だけでもコピペして見せていただければ、次こそ確実に「これのせいです」と言えます。`);
+          // 「テーブル番号」「行番号」「列番号：テキスト内容」を一列に並べて出力
+          console.log(`  [T${tIdx + 1}][行${rIdx + 1}] ${rowTextParts.join(' | ')}`);
+        }
+      }
+    }
+    // --- ここまで追加ロジック ---
 
+    console.log(`\n============== 調査終了 ==============`);
   } catch (err) {
-    console.log(`❌ 特定コードの実行中にエラーが発生しました: ${err.message}`);
+    console.log(`❌ エラー: ${err.message}`);
   } finally {
     await browser.close();
   }

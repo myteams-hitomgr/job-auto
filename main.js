@@ -393,21 +393,25 @@ async function downloadAndPrepareCSV(browser, acc) {
               break;
             } 
             
-            // 2. 【二優先】最新リクエストの「進行中・出力中」判定（下方に過去のキャンセルがあっても、これらが最優先）
+            // 2. 【二優先】最新リクエストの「進行中・出力中」判定
             else if (scanArea.includes('進行中') || scanArea.includes('出力中')) {
-              const matchDetail = scanArea.match(/\d+\/\d+件(出力中|進行中)[^\s]*/);
+              // 進捗件数（例: 1800/30348件出力中）と 残り時間（例: 残り約16分39秒）を同時に抜き出す
+              const progressMatch = scanArea.match(/\d+\/\d+件(出力中|進行中)/);
+              const timeMatch = scanArea.match(/残り約\d+分(\d+秒)?/);
+              
               let detailLog = '';
-              if (matchDetail) {
-                detailLog = ` (${matchDetail[0]})`;
-              } else {
-                const progressMatch = scanArea.match(/\d+\/\d+件/);
-                const timeMatch = scanArea.match(/残り約[^\s]+/);
-                if (progressMatch) {
-                  detailLog = ` (${progressMatch[0]}出力中${timeMatch ? ' ' + timeMatch[0] : ''})`;
+              if (progressMatch) {
+                detailLog = progressMatch[0];
+                if (timeMatch) {
+                  detailLog += ` ${timeMatch[0]}`;
                 }
+              } else {
+                // 最低限の文字列置換によるフォールバック
+                const fallbackMatch = scanArea.match(/\d+\/\d+件[^\s]*/);
+                detailLog = fallbackMatch ? fallbackMatch[0] : 'データ出力中';
               }
               
-              console.log(`⚙️ 【${acc.name}】現在のステータス: [進行中]${detailLog}`);
+              console.log(`⚙️ 【${acc.name}】現在のステータス: [進行中] (${detailLog})`);
               statusFound = true;
               break; 
             } 

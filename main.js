@@ -375,31 +375,28 @@ async function downloadAndPrepareCSV(browser, acc) {
       await page.waitForTimeout(10000);
 
       try {
-        // 画面全体のテキストを取得
         const pageText = await page.evaluate(() => document.body.innerText || "");
-
-        // テーブルデータを1行ずつ配列化して解析（空行排除）
         const lines = pageText.split('\n').map(l => l.trim()).filter(Boolean);
 
-        // 「リクエスト日時」が含まれるヘッダー行を見つけ、その直後のデータを見る
+        let isCompleted = false;
         let statusFound = false;
+
         for (let i = 0; i < lines.length; i++) {
           if (lines[i].includes('リクエスト日時') && lines[i].includes('データ種別')) {
-            // ヘッダーの次以降の行にデータが並ぶ
-            // HITO Managerの仕様上、1つのデータが複数行に分かれてinnerText化されることがあるため、周辺数行をスキャン
             const scanArea = lines.slice(i + 1, i + 8).join(' ');
 
             if (scanArea.includes('待機中')) {
               console.log(`⏳ 【${acc.name}】現在のステータス: [待機中] (実行までしばらくお待ち下さい)`);
               statusFound = true;
-              break;
+              break; 
             } else if (scanArea.includes('進行中')) {
               console.log(`⚙️ 【${acc.name}】現在のステータス: [進行中]`);
               statusFound = true;
-              break;
+              break; 
             } else if (scanArea.includes('完了') || scanArea.includes('.csv')) {
               console.log(`✅ 【${acc.name}】CSVの生成完了を確認しました！`);
               statusFound = true;
+              isCompleted = true;
               break;
             } else if (scanArea.includes('キャンセル')) {
               throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
@@ -407,9 +404,8 @@ async function downloadAndPrepareCSV(browser, acc) {
           }
         }
 
-        // 完了していたらループを抜ける
-        if (pageText.includes('完了') && (pageText.includes('.csv') || pageText.includes('ダウンロード'))) {
-          // 直前のログが完了なら即座にブレイク
+        // 「完了」ステータスをしっかり掴んだ時だけ監視ループをブレイクして次へ進む
+        if (isCompleted) {
           break;
         }
 
@@ -429,7 +425,6 @@ async function downloadAndPrepareCSV(browser, acc) {
     let downloadLink = page.locator('table tr:has(td) a[href*=".csv"], table tr:has(td) a:has-text("ダウンロード"), td a, td button').first();
 
     if (!downloadLink || (await downloadLink.count()) === 0) {
-      // テーブルセレクターが全滅した場合の最終手段（画面上の最初のリンク・ダウンロード文言を狙う）
       downloadLink = page.locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
     }
 
@@ -438,8 +433,10 @@ async function downloadAndPrepareCSV(browser, acc) {
     }
 
     console.log(`👉 【${acc.name}】ダウンロードを開始します...`);
+    
+    // タイムアウトを回避するため、保存イベントとクリックを同時に走らせる
     const [download] = await Promise.all([
-      page.waitForEvent('download'), 
+      page.waitForEvent('download', { timeout: 60000 }), 
       downloadLink.click({ force: true })
     ]);
     

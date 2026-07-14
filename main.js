@@ -348,15 +348,17 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`⏳ システムによる「取出ファイル一覧」への自動画面切り替えを待っています...`);
     await page.waitForLoadState('networkidle').catch(() => {});
     
-    // 💡 テーブル要素がDOMに出現するまで最大30秒能動的に待機させてフリーズを防ぐ
-    await page.waitForSelector('table, tr, td', { timeout: 30000 }).catch(() => {});
+    // テーブルレイアウトが確実に描写されるのを少し待つ
+    await page.waitForSelector('table, tr', { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(3000);
 
-    console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中（画面テキストの取得を開始）...`);
+    console.log(`⏳ 【${acc.name}】CSV抽出の完了を【10秒サイクル】で監視開始します...`);
     let loopCount = 1;
 
     while (true) {
-      await page.waitForTimeout(3000);
+      // ⏱️ 要求通り、10秒ごとにしっかりと監視ウェイトをかける
+      console.log(`⏳ 【監視ログ】10秒ごとの生存確認中... (チェック回数: ${loopCount})`);
+      await page.waitForTimeout(10000);
 
       // 万が一弾かれて404エラー（errors/notfounds）になった場合の復帰ルート
       if (page.url().includes('errors/notfounds')) {
@@ -364,15 +366,15 @@ async function downloadAndPrepareCSV(browser, acc) {
         await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' }).catch(() => {});
         await page.waitForTimeout(3000);
         await page.goto(`${baseUrl}/rec_export_histories`, { waitUntil: 'networkidle' }).catch(() => {});
-        await page.waitForSelector('table, tr, td', { timeout: 10000 }).catch(() => {});
+        await page.waitForSelector('table, tr', { timeout: 10000 }).catch(() => {});
       }
 
-      // 💡 tbodyの有無に関わらず、全てのtr要素から1行目を引っ張れる強力なロケーターに変更
-      const rowsLocator = page.locator('table tr:has(td), tbody tr');
+      // 「中にtdが入っているデータ行」に限定して捕捉
+      const rowsLocator = page.locator('table tr:has(td)');
       const rowCount = await rowsLocator.count();
       
       if (rowCount === 0) {
-        console.log(`⏳ 一覧テーブルデータを非同期読み込み中... (ループ: ${loopCount})`);
+        console.log(`⏳ 一覧テーブルデータをロードしています...`);
         loopCount++;
         continue;
       }
@@ -382,7 +384,6 @@ async function downloadAndPrepareCSV(browser, acc) {
       const cellCount = await cells.count();
 
       if (cellCount < 4) {
-        console.log(`⏳ テーブルの列情報を構築中... (検出列数: ${cellCount})`);
         loopCount++;
         continue;
       }
@@ -391,8 +392,8 @@ async function downloadAndPrepareCSV(browser, acc) {
       const statusText  = (await cells.nth(2).textContent() || "").trim();
       const detailText  = (await cells.nth(3).textContent() || "").trim();
 
-      // 📢 リクエスト日時の下の行を文字としてコンソールに強制出力！
-      console.log(`📢 【ヒトマネ進捗確認】日時: ${requestTime} | 状態: [${statusText}] | 詳細: ${detailText}`);
+      // 📢 読み取った最新の行の文字列をリアルタイムに強制出力
+      console.log(`📢 【ヒトマネ最新進捗】日時: ${requestTime} | 状態: [${statusText}] | 詳細: ${detailText}`);
 
       fs.writeFileSync(
         `debug_${acc.name}.html`,
@@ -417,7 +418,7 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    const finalLatestRow = page.locator('table tr:has(td), tbody tr').first();
+    const finalLatestRow = page.locator('table tr:has(td)').first();
     let downloadLink = null;
     
     if (await finalLatestRow.count() > 0) {

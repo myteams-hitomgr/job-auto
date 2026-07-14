@@ -226,15 +226,15 @@ function processCSVFile(filePath, accountName) {
 async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
   const baseUrl = acc.url.endsWith('/login/') ? acc.url.slice(0, -7) : acc.url;
   try {
-    const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")) + li, ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
+    const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")), ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
     if (await menuHoverIcon.count() > 0) {
       await menuHoverIcon.hover();
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(1500);
       const subMenuLink = page.locator(`a:has-text("${targetText}")`).first();
       if (await subMenuLink.count() > 0 && await subMenuLink.isVisible()) {
         await subMenuLink.click();
         await page.waitForLoadState('networkidle').catch(() => {});
-        await page.waitForTimeout(4000);
+        await page.waitForTimeout(5000);
         return;
       }
     }
@@ -242,7 +242,7 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
   }
   const destinationUrl = `${baseUrl}/${targetUrlSegment}`;
   await page.goto(destinationUrl, { waitUntil: 'networkidle' }).catch(() => {});
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(5000);
 }
 
 async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
@@ -366,25 +366,29 @@ async function downloadAndPrepareCSV(browser, acc) {
     const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約")').first();
     await exportBtn.waitFor({ state: 'visible', timeout: 30000 });
     await exportBtn.click({ force: true });
-    await page.waitForTimeout(8000);
+    
+    // 💡 サーバーの過負荷・404バグを防ぐため、予約直後に「15秒間」完全にその場で待機します
+    console.log(`💤 サーバーの取り出し初期化を待つため、15秒間その場で待機します...`);
+    await page.waitForTimeout(15000);
 
     console.log(`👉 【${acc.name}】「取出ファイル一覧」画面へ移動します...`);
     await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
 
-    console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中（ボタン押下を廃止し、自動更新に追従します）...`);
+    console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
     let loopCount = 1;
 
     while (true) {
-      // 💡 ボタンは絶対に押さず、システム側の「勝手な自動リロード」の邪魔をしないように3秒だけ待機
+      // システム側の自動リロードの邪魔をしないように3秒待機
       await page.waitForTimeout(3000);
 
-      // 万が一エラー画面（404）に弾かれた場合のみ、正規ルートで復帰
+      // 💡 万が一エラー画面（404）に弾かれた場合の鉄壁の復帰ルート
       if (page.url().includes('errors/notfounds')) {
-        console.log("⚠️ エラー画面を回避するため、安全ルートで再接続します...");
-        await page.goto(`${baseUrl}/rec_recruitments`, { waitUntil: 'networkidle' }).catch(() => {});
-        await page.waitForTimeout(2000);
-        await page.goto(`${baseUrl}/rec_export_histories`, { waitUntil: 'networkidle' }).catch(() => {});
-        await page.waitForTimeout(3000);
+        console.log("⚠️ エラー画面を検知。ダッシュボード(ホーム)を経由して正規メニューから再侵入します...");
+        await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' }).catch(() => {});
+        await page.waitForTimeout(4000);
+        // メニュー経由で再度「取出ファイル一覧」へアプローチ
+        await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
+        continue;
       }
 
       const rowCount = await page.locator("table tbody tr").count();
@@ -406,7 +410,7 @@ async function downloadAndPrepareCSV(browser, acc) {
       const statusText  = (await cells.nth(2).textContent() || "").trim();
       const detailText  = (await cells.nth(3).textContent() || "").trim();
 
-      // 📢 要求通り、JOBのログ画面に「待機中」や「進行中：〇〇/〇〇件出力中 残り約〇〇分」をリアルタイム強制出力！
+      // 📢 リアルタイムの最新進捗情報を常時出力
       console.log(`📢 【ヒトマネ最新進捗】[日時: ${requestTime}] | [ステータス: ${statusText}] | [詳細: ${detailText}]`);
 
       fs.writeFileSync(

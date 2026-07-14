@@ -395,18 +395,19 @@ async function downloadAndPrepareCSV(browser, acc) {
             
             // 2. 【二優先】最新リクエストの「進行中・出力中」判定
             else if (scanArea.includes('進行中') || scanArea.includes('出力中')) {
-              // 進捗件数（例: 1800/30348件出力中）と 残り時間（例: 残り約16分39秒）を同時に抜き出す
+              // 進捗件数を抽出 (例: 30300/30348件出力中)
               const progressMatch = scanArea.match(/\d+\/\d+件(出力中|進行中)/);
-              const timeMatch = scanArea.match(/残り約\d+分(\d+秒)?/);
+              // 残り時間を抽出 (例: 残り約16分39秒、残り約2秒、残り約5分 いずれにも対応)
+              const timeMatch = scanArea.match(/残り約(\d+分)?(\d+秒)?/);
               
               let detailLog = '';
               if (progressMatch) {
                 detailLog = progressMatch[0];
-                if (timeMatch) {
+                // 残り時間テキストが存在し、かつ「残り約」だけで終わっていない場合のみ結合
+                if (timeMatch && timeMatch[0] !== '残り約') {
                   detailLog += ` ${timeMatch[0]}`;
                 }
               } else {
-                // 最低限の文字列置換によるフォールバック
                 const fallbackMatch = scanArea.match(/\d+\/\d+件[^\s]*/);
                 detailLog = fallbackMatch ? fallbackMatch[0] : 'データ出力中';
               }
@@ -416,14 +417,14 @@ async function downloadAndPrepareCSV(browser, acc) {
               break; 
             } 
             
-            // 3. 【三優先】最新リクエストの「待機中」判定（過去のキャンセル履歴を無視します）
+            // 3. 【三優先】最新リクエストの「待機中」判定
             else if (scanArea.includes('待機中')) {
               console.log(`⏳ 【${acc.name}】現在のステータス: [待機中] (実行までしばらくお待ち下さい)`);
               statusFound = true;
               break; 
             }
 
-            // 4. 【最終フォールバック】稼働中のタスクがなく、単一で「キャンセル」状態になっている場合のみエラー判定
+            // 4. 【最終フォールバック】単一で「キャンセル」状態になっている場合のみエラー判定
             else if (scanArea.includes('キャンセル')) {
               throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
             }
@@ -440,7 +441,6 @@ async function downloadAndPrepareCSV(browser, acc) {
         }
 
       } catch (e) {
-        // キャンセルエラーの場合はそのまま上位のcatchへ投げる
         if (e.message.includes('キャンセル')) throw e;
         console.log(`⚠️ 【${acc.name}】監視ループ内で一時的なエラー（自動リロードと重複）: ${e.message}`);
       }
@@ -449,7 +449,6 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    // 確実に対象行のダウンロードリンク・ボタンをクリックする
     let downloadLink = page.locator('table tr:has(td) a[href*=".csv"], table tr:has(td) a:has-text("ダウンロード"), td a, td button').first();
 
     if (!downloadLink || (await downloadLink.count()) === 0) {
@@ -462,7 +461,6 @@ async function downloadAndPrepareCSV(browser, acc) {
 
     console.log(`👉 【${acc.name}】ダウンロードを開始します...`);
     
-    // タイムアウトを回避するため、保存イベントとクリックを同時に走らせる
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: 60000 }), 
       downloadLink.click({ force: true })
@@ -492,80 +490,4 @@ async function executeNormalSet(page, acc, processed) {
 }
 
 async function executePvSet(page, acc, processed) {
-  console.log(`📦 【${acc.name}】[PV版] 2ファイル連続アップロード（30秒インターバル）を実行します。`);
-  await uploadSingleFileOnly(page, acc, processed.pv.path1, '③PV版・非掲載（先）');
-  await uploadSingleFileOnly(page, acc, processed.pv.path2, '④PV版・掲載（後）');
-  console.log(`🎉 【${acc.name}】PV版2ファイルのアップロード処理を送信しました。`);
-}
-
-// 🏁 起動回数ベース永久ローテーション制御
-(async () => {
-  const counterPath = path.join(__dirname, 'counter.json');
-  let counterData = { count: 0 };
-
-  // カウンター読み込み
-  try {
-    if (fs.existsSync(counterPath)) {
-      counterData = JSON.parse(fs.readFileSync(counterPath, 'utf8'));
-    }
-  } catch (e) {
-    console.log('⚠️ counter.json読み込み失敗。0から開始します。');
-    counterData = { count: 0 };
-  }
-
-  const rotation = ['A_NORMAL', 'A_PV', 'B_NORMAL', 'B_PV'];
-  
-  // 現在のインデックスから状態を決定
-  const index = counterData.count % rotation.length;
-  const currentState = rotation[index];
-
-  console.log(`🤖 現在のインデックス: ${index} → 今回の処理: 【${currentState}】`);
-
-  const browser = await chromium.launch({ headless: true });
-
-  try {
-    if (currentState === 'A_NORMAL') {
-      const acc = accounts.find(a => a.name === 'A');
-      const result = await downloadAndPrepareCSV(browser, acc);
-      await executeNormalSet(result.page, acc, result.processed);
-      await result.context.close();
-
-    } else if (currentState === 'A_PV') {
-      const acc = accounts.find(a => a.name === 'A');
-      const result = await downloadAndPrepareCSV(browser, acc);
-      await executePvSet(result.page, acc, result.processed);
-      await result.context.close();
-
-    } else if (currentState === 'B_NORMAL') {
-      const acc = accounts.find(a => a.name === 'B');
-      const result = await downloadAndPrepareCSV(browser, acc);
-      await executeNormalSet(result.page, acc, result.processed);
-      await result.context.close();
-
-    } else if (currentState === 'B_PV') {
-      const acc = accounts.find(a => a.name === 'B');
-      const result = await downloadAndPrepareCSV(browser, acc);
-      await executePvSet(result.page, acc, result.processed);
-      await result.context.close();
-    }
-
-    console.log(`🏁 【${currentState}】の処理が正常に完了しました。`);
-
-  } catch (err) {
-    console.log(`❌ エラーが発生しました。次回のスケジュール枠では次のタスクに進みます。: ${err.message}`);
-    process.exitCode = 1;
-
-  } finally {
-    await browser.close();
-
-    // 成功・失敗に関わらず、次回用に必ずカウントを進めて保存する
-    counterData.count = (index + 1) % rotation.length;
-    
-    try {
-      fs.writeFileSync(counterPath, JSON.stringify(counterData, null, 2), 'utf8');
-      console.log(`💾 次回インデックスを保存しました: ${counterData.count} (次は 【${rotation[counterData.count]}】)`);
-    } catch (writeErr) {
-      console.log(`⚠️ counter.jsonの保存に失敗しました: ${writeErr.message}`);
-    }
-  }
-})();
+  console.log(`📦 【${acc.name}】

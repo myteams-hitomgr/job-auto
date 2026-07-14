@@ -238,7 +238,6 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
     }
   } catch (err) {
   }
-  // URL置換バグの修正: /login/ を削り、最後にターゲットセグメントを結合
   const baseUrl = acc.url.endsWith('/login/') ? acc.url.slice(0, -7) : acc.url;
   const destinationUrl = `${baseUrl}/${targetUrlSegment}`;
   await page.goto(destinationUrl, { waitUntil: 'networkidle' }).catch(() => {});
@@ -373,38 +372,33 @@ async function downloadAndPrepareCSV(browser, acc) {
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
     let loopCount = 1;
-    const watchStartTime = Date.now(); 
-    let lastLogTime = 0;
 
     while (true) {
-      console.log(`🔄 while開始 (ループ回数: ${loopCount})`);
+      console.log(`\n🔄 監視ループ中 (回数: ${loopCount})`);
+      
+      // 💡 ボタンクリックやリロードをせず、その場のDOM要素が更新されるのを5秒待つ
+      await page.waitForTimeout(5000);
 
-      // 「最新を表示する」ボタンがあればクリックして画面の表を更新する
-      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する")').first();
-      if (await refreshBtn.count() > 0) {
-        console.log("👆 「最新を表示する」ボタンをクリックしてステータスを更新します...");
-        await refreshBtn.click({ force: true }).catch(() => {});
-        await page.waitForTimeout(4000); // 反映を少し待つ
-      } else {
-        await page.waitForTimeout(5000); // ボタンがない場合は5秒待機
+      // 404エラー画面に飛ばされた場合は、正しい「取出ファイル一覧」URLに力づくで戻す安全措置
+      if (page.url().includes('errors/notfounds')) {
+        console.log("⚠️ エラー画面を検知。正しい一覧URLへ再侵入します...");
+        const listUrl = `${baseUrl}/rec_export_histories`;
+        await page.goto(listUrl, { waitUntil: 'networkidle' }).catch(() => {});
+        await page.waitForTimeout(2000);
       }
 
-      console.log("現在のURL:", page.url());
-
       const rowCount = await page.locator("table tbody tr").count();
-      console.log("① 行数=" + rowCount);
-
       if (rowCount === 0) {
-        console.log("まだ取得できません（テーブルに行が存在しません）");
+        console.log("⏳ 一覧テーブルの読み込みを待っています（行数=0）");
         loopCount++;
         continue;
       }
 
+      // 最新の1行目を取得
       const latestRow = page.locator("table tbody tr").first();
       const cells = latestRow.locator("td"); 
 
       if (await cells.count() < 4) {
-        console.log("テーブルの列数が足りません。完了を待ちます。");
         loopCount++;
         continue;
       }
@@ -413,53 +407,30 @@ async function downloadAndPrepareCSV(browser, acc) {
       const statusText  = (await cells.nth(2).textContent() || "").trim();
       const detailText  = (await cells.nth(3).textContent() || "").trim();
 
+      // 🛠️ コンソールログに「進行状況（件数・残り時間など）」を出力させる処理
+      console.log(`📊 【${acc.name}】 リクエスト時刻: ${requestTime} | ステータス: [${statusText}] | 詳細: ${detailText}`);
+
       fs.writeFileSync(
         `debug_${acc.name}.html`,
         await page.content(),
         "utf8"
       );
 
-      // ステータスが「完了」または詳細にDLリンク（.csvやaタグ）が生成されたらループを抜ける
+      // ステータスが「完了」または詳細列にダウンロードリンク(aタグ)を見つけたらループ終了
       if (
         statusText.includes('完了') ||
         statusText.includes('成功') ||
         detailText.includes('rec_recruitments') ||
         (await cells.nth(3).locator('a').count() > 0)
       ) {
-        console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
+        console.log(`✅ 【${acc.name}】CSVの生成完了を確認しました！`);
         break;
-      }
-
-      const now = Date.now();
-      if (now - lastLogTime >= 10000) {
-        lastLogTime = now;
-        let displayDetail = detailText || "...";
-
-        const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
-        if (match) {
-          const currentCount = parseInt(match[1], 10);
-          const totalCount = parseInt(match[2], 10);
-
-          if (currentCount > 0 && totalCount > 0) {
-            const elapsed = (Date.now() - watchStartTime) / 1000;
-            const percent = ((currentCount / totalCount) * 100).toFixed(1);
-            const estimatedTotalTime = (elapsed / currentCount) * totalCount;
-            const remaining = Math.max(0, estimatedTotalTime - elapsed);
-
-            const rMin = Math.floor(remaining / 60);
-            const rSec = Math.floor(remaining % 60);
-
-            displayDetail = `${currentCount}/${totalCount}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
-          }
-        }
-
-        console.log(`⏳ 【${acc.name}】 ${requestTime} | [${statusText}] ${displayDetail}`);
       }
 
       loopCount++;
     }
 
-    console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
+    console.log(`👉 【${acc.name}】ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
     const finalLatestRow = page.locator('table tbody tr, table tr:has(td)').first();

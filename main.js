@@ -364,7 +364,6 @@ async function downloadAndPrepareCSV(browser, acc) {
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
-    // B専用のURL構造（csv_export_queues）に対応
     const historySegment = (acc.name === 'B') ? "csv_export_queues" : "rec_export_histories";
     console.log(`👉 【${acc.name}】「取出ファイル一覧」画面へ移動します... (${historySegment})`);
     await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", historySegment);
@@ -374,45 +373,51 @@ async function downloadAndPrepareCSV(browser, acc) {
     const watchStartTime = Date.now(); 
 
     while (true) {
-      // 🌟 テーブルがサーバーから非同期で描画されるのを明示的に待つ
+      // 🌟 【対策1】テーブル本体、およびデータ本体が完全に描画されるまで少し長めに待つ
       await page.waitForSelector('table tr, .table tr, tbody tr', { timeout: 10000 }).catch(() => {});
-      await page.waitForTimeout(2000); // 描画安定のために少し追加待機
+      await page.waitForTimeout(1000);
+
+      // 非同期「読み込み中」表示が完全に消え去るまで待機（これによって無限「読み込み中」を回避）
+      const loadingOverlay = page.locator('div:has-text("読み込み中"), div:has-text("データを取得中"), .loading-overlay');
+      const isVisible = await loadingOverlay.count() > 0 && await loadingOverlay.first().isVisible();
+      if (isVisible) {
+        console.log(`⏳ 【${acc.name}】画面内に「読み込み中」のローディング表示を検出。消去を待ちます...`);
+        await page.waitForTimeout(3000);
+        continue;
+      }
 
       const rows = await page.locator('table tr, .table tr, tbody tr').all();
       let statusText = "";
       let detailText = "";
       let isDataLoaded = false;
 
-      // テーブルデータが存在するかチェック
       if (rows.length > 1) {
-        isDataLoaded = true;
-        // Bのテーブルカラム構成は「日付」「区分」「状態(ダウンロードリンクなど)」
-        const latestRow = rows[1]; // ヘッダーを除いた最初のデータ行
-        const cells = await latestRow.locator('td').all();
+        // 🌟 【対策2】1行目に「読み込み中」等のテキストが含まれている場合はまだ初期化途中とみなし、スルーする
+        const latestRow = rows[1];
+        const rowFullContent = (await latestRow.textContent() || "").trim();
 
-        if (cells.length >= 2) {
-          const firstCellText = (await cells[0].textContent() || "").trim();
-          // 日付フォーマット（2026/07/14 等）または妥当なテキストが入っているか
-          if (firstCellText.includes('2026') || firstCellText.includes('/') || firstCellText.includes(':') || firstCellText.length > 0) {
+        if (rowFullContent.length > 0 && !rowFullContent.includes("読み込み中") && !rowFullContent.includes("データを取得中")) {
+          isDataLoaded = true;
+          const cells = await latestRow.locator('td').all();
+
+          if (cells.length >= 2) {
+            const firstCellText = (await cells[0].textContent() || "").trim();
             
-            // 全セルから進捗状態に使える文言をスキャン
-            const rowFullContent = (await latestRow.textContent() || "").trim();
-            statusText = rowFullContent;
-            
-            // 進捗セルまたは詳細セルが分かれている場合、安全に抽出
-            if (cells.length >= 3) {
-              statusText = (await cells[2].textContent() || "").trim();
-            }
-            if (cells.length >= 4) {
-              detailText = (await cells[3].textContent() || "").trim();
-            } else {
-              detailText = rowFullContent; 
+            if (firstCellText.includes('2026') || firstCellText.includes('/') || firstCellText.includes(':') || firstCellText.length > 0) {
+              statusText = rowFullContent;
+              if (cells.length >= 3) {
+                statusText = (await cells[2].textContent() || "").trim();
+              }
+              if (cells.length >= 4) {
+                detailText = (await cells[3].textContent() || "").trim();
+              } else {
+                detailText = rowFullContent; 
+              }
             }
           }
         }
       }
 
-      // 進捗テキストのクリーンアップ
       const cleanStatus = statusText.replace(/\s+/g, ' ');
       const cleanDetail = detailText.replace(/\s+/g, ' ');
 
@@ -420,22 +425,21 @@ async function downloadAndPrepareCSV(browser, acc) {
         throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
       }
 
-      // CSVのリンクがある、または「完了」となっている場合を検知
-      const hasLink = (await rows[1].locator('a[href*=".csv"], a:has-text("ダウンロード"), button:has-text("ダウンロード"), a[href*="download"]').count()) > 0;
+      const hasLink = isDataLoaded && (await rows[1].locator('a[href*=".csv"], a:has-text("ダウンロード"), button:has-text("ダウンロード"), a[href*="download"]').count()) > 0;
       
-      const isProcessing = /読み込み中|作成中|準備中|処理中|待機中|未処理|インポート/.test(cleanStatus + cleanDetail);
-      const isSuccess = cleanStatus.includes('完了') || cleanStatus.includes('成功') || cleanDetail.includes('rec_recruitments') || hasLink;
+      // 進捗中か、完了かの厳密判定
+      const isProcessing = /読み込み中|作成中|準備中|処理中|待機中|未処理|インポート/.test(cleanStatus + cleanDetail) || !isDataLoaded;
+      const isSuccess = isDataLoaded && (cleanStatus.includes('完了') || cleanStatus.includes('成功') || cleanDetail.includes('rec_recruitments') || hasLink);
 
-      if (isDataLoaded && isSuccess && !isProcessing) {
+      if (isSuccess && !isProcessing) {
         console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
         break;
       }
       
       if (loopCount === 1 || loopCount % 6 === 0) {
-        const displayStatus = isDataLoaded ? (cleanStatus.slice(0, 30) || "読み込み中") : "テーブル描画待ち";
+        const displayStatus = isDataLoaded ? (cleanStatus.slice(0, 30) || "読み込み中") : "データロード待ち";
         let displayDetail = isDataLoaded ? cleanDetail.slice(0, 50) : "...";
         
-        // 進捗パーセンテージと推定残り時間の計算
         const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
         if (match) {
           const currentCount = parseInt(match[1], 10);
@@ -453,7 +457,6 @@ async function downloadAndPrepareCSV(browser, acc) {
         console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${displayStatus}] ${displayDetail}`);
       }
 
-      // 🔄 5秒に一度、画面上部の「最新を表示する」または「更新」を押してテーブルを強制リロード
       const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する"), a:has-text("更新"), button:has-text("更新")').first();
       if (await refreshBtn.count() > 0) {
         await refreshBtn.click({ force: true });
@@ -467,7 +470,6 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    // ダウンロードボタンを1列目から特定
     const finalRows = await page.locator('table tr, .table tr, tbody tr').all();
     let downloadLink = null;
     if (finalRows.length > 1) {
@@ -476,7 +478,6 @@ async function downloadAndPrepareCSV(browser, acc) {
     }
 
     if (!downloadLink || (await downloadLink.count()) === 0) {
-      // 予備のフォールバック：画面全体の最初のダウンロードリンクを探す
       downloadLink = page.locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
     }
 

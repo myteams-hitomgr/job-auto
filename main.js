@@ -370,46 +370,68 @@ async function downloadAndPrepareCSV(browser, acc) {
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中... (10秒インターバル監視)`);
 
-    // 🔄 自動リロードに追従し、10秒ごとに「td」を持った一番上のデータ行を安全にチェック
+    // 🔄 HTML構造に依存せず、画面全体の文字要素から現在のステータスを追うロジック
     while (true) {
-      // 10秒待機
       await page.waitForTimeout(10000);
 
       try {
-        const firstDataRow = page.locator('table tr:has(td)').first();
-        if (await firstDataRow.count() > 0) {
-          const cells = await firstDataRow.locator('td').all();
-          if (cells.length >= 4) {
-            const dateText = (await cells[0].textContent() || "").trim();
-            const statusText = (await cells[2].textContent() || "").trim();
-            const detailText = (await cells[3].textContent() || "").trim();
+        // 画面全体のテキストを取得
+        const pageText = await page.evaluate(() => document.body.innerText || "");
 
-            // コンソール確認用：取得した1番上の中身を出力
-            console.log(`📝 【${acc.name}】最新リクエスト: [${dateText}] ステータス: [${statusText}] (${detailText})`);
+        // テーブルデータを1行ずつ配列化して解析（空行排除）
+        const lines = pageText.split('\n').map(l => l.trim()).filter(Boolean);
 
-            if (statusText === '待機中') {
-              // 「待機中」の間はそのまま待機
-            } else if (statusText === '進行中') {
-              // 「進行中」の間もそのまま待機
-            } else if (statusText === '完了') {
+        // 「リクエスト日時」が含まれるヘッダー行を見つけ、その直後のデータを見る
+        let statusFound = false;
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes('リクエスト日時') && lines[i].includes('データ種別')) {
+            // ヘッダーの次以降の行にデータが並ぶ
+            // HITO Managerの仕様上、1つのデータが複数行に分かれてinnerText化されることがあるため、周辺数行をスキャン
+            const scanArea = lines.slice(i + 1, i + 8).join(' ');
+
+            if (scanArea.includes('待機中')) {
+              console.log(`⏳ 【${acc.name}】現在のステータス: [待機中] (実行までしばらくお待ち下さい)`);
+              statusFound = true;
+              break;
+            } else if (scanArea.includes('進行中')) {
+              console.log(`⚙️ 【${acc.name}】現在のステータス: [進行中]`);
+              statusFound = true;
+              break;
+            } else if (scanArea.includes('完了') || scanArea.includes('.csv')) {
               console.log(`✅ 【${acc.name}】CSVの生成完了を確認しました！`);
-              break; 
-            } else if (statusText.includes('キャンセル') || detailText.includes('キャンセル')) {
+              statusFound = true;
+              break;
+            } else if (scanArea.includes('キャンセル')) {
               throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
             }
           }
         }
+
+        // 完了していたらループを抜ける
+        if (pageText.includes('完了') && (pageText.includes('.csv') || pageText.includes('ダウンロード'))) {
+          // 直前のログが完了なら即座にブレイク
+          break;
+        }
+
+        if (!statusFound) {
+          console.log(`❓ 【${acc.name}】ステータス文字が特定できません。自動リロードを待ちます...`);
+        }
+
       } catch (e) {
-        // 自動リロードのDOM衝突エラー対策
+        console.log(`⚠️ 【${acc.name}】監視ループ内で一時的なエラー（自動リロードと重複）: ${e.message}`);
       }
     }
 
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    // ダウンロードリンクを一番上のデータ行から確実に取得
-    const targetRow = page.locator('table tr:has(td)').first();
-    let downloadLink = targetRow.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
+    // 確実に対象行のダウンロードリンク・ボタンをクリックする
+    let downloadLink = page.locator('table tr:has(td) a[href*=".csv"], table tr:has(td) a:has-text("ダウンロード"), td a, td button').first();
+
+    if (!downloadLink || (await downloadLink.count()) === 0) {
+      // テーブルセレクターが全滅した場合の最終手段（画面上の最初のリンク・ダウンロード文言を狙う）
+      downloadLink = page.locator('a[href*=".csv"], a:has-text("ダウンロード")').first();
+    }
 
     if (!downloadLink || (await downloadLink.count()) === 0) {
       throw new Error("CSV of download link cannot be specified.");

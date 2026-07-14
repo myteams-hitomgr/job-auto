@@ -364,8 +364,10 @@ async function downloadAndPrepareCSV(browser, acc) {
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
-    console.log(`👉 【${acc.name}】上部メニューの矢印ボタンにマウスを乗せます...`);
-    await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
+    // 【一発解決の核心その1】アカウントごとに「取出ファイル一覧」の遷移先URLを100%正しく出し分け
+    const historySegment = (acc.name === 'B') ? "csv_export_queues" : "rec_export_histories";
+    console.log(`👉 【${acc.name}】「取出ファイル一覧」画面へ移動します... (segment: ${historySegment})`);
+    await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", historySegment);
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
     let loopCount = 1;
@@ -386,7 +388,7 @@ async function downloadAndPrepareCSV(browser, acc) {
         await page.waitForTimeout(3000);
       }
 
-      // 【一発解決の核心】 毎ループ、常に新しいDOM要素としてテーブルの先頭行を取得し直す
+      // 【一発解決の核心その2】 毎ループ、常に新しいDOM要素としてテーブルの先頭行を取得し直す
       const tableRows = await page.locator('table tr').all();
       
       let statusText = "";

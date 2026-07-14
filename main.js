@@ -385,27 +385,21 @@ async function downloadAndPrepareCSV(browser, acc) {
           if (lines[i].includes('リクエスト日時') && lines[i].includes('データ種別')) {
             const scanArea = lines.slice(i + 1, i + 8).join(' ');
 
-            // 【超重要】「キャンセル」の判定を最優先に行います
-            // 進行中の『残り約17分40秒 キャンセル』という文字を巻き込まないよう、
-            // 「進行中」の文字がなく、単一で「キャンセル」と表示されている状態を厳密にチェックします。
-            if (scanArea.includes('キャンセル') && !scanArea.includes('出力中') && !scanArea.includes('進行中')) {
-              throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
-            }
-            
-            // 進行中・完了・待機中の判定
+            // 1. 【最優先】最新リクエストの生成完了判定
             if (scanArea.includes('完了') || scanArea.includes('.csv')) {
               console.log(`✅ 【${acc.name}】CSVの生成完了を確認しました！`);
               statusFound = true;
               isCompleted = true;
               break;
-            } else if (scanArea.includes('進行中') || scanArea.includes('出力中')) {
-              // ⚙️ 件数および残り時間（例: "1800/30348件出力中 残り約16分39秒" など）を柔軟に抽出する正規表現
+            } 
+            
+            // 2. 【二優先】最新リクエストの「進行中・出力中」判定（下方に過去のキャンセルがあっても、これらが最優先）
+            else if (scanArea.includes('進行中') || scanArea.includes('出力中')) {
               const matchDetail = scanArea.match(/\d+\/\d+件(出力中|進行中)[^\s]*/);
               let detailLog = '';
               if (matchDetail) {
                 detailLog = ` (${matchDetail[0]})`;
               } else {
-                // 部分的にマッチさせるフォールバック
                 const progressMatch = scanArea.match(/\d+\/\d+件/);
                 const timeMatch = scanArea.match(/残り約[^\s]+/);
                 if (progressMatch) {
@@ -416,10 +410,18 @@ async function downloadAndPrepareCSV(browser, acc) {
               console.log(`⚙️ 【${acc.name}】現在のステータス: [進行中]${detailLog}`);
               statusFound = true;
               break; 
-            } else if (scanArea.includes('待機中')) {
+            } 
+            
+            // 3. 【三優先】最新リクエストの「待機中」判定（過去のキャンセル履歴を無視します）
+            else if (scanArea.includes('待機中')) {
               console.log(`⏳ 【${acc.name}】現在のステータス: [待機中] (実行までしばらくお待ち下さい)`);
               statusFound = true;
               break; 
+            }
+
+            // 4. 【最終フォールバック】稼働中のタスクがなく、単一で「キャンセル」状態になっている場合のみエラー判定
+            else if (scanArea.includes('キャンセル')) {
+              throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
             }
           }
         }

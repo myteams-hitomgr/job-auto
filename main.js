@@ -385,21 +385,31 @@ async function downloadAndPrepareCSV(browser, acc) {
           if (lines[i].includes('リクエスト日時') && lines[i].includes('データ種別')) {
             const scanArea = lines.slice(i + 1, i + 8).join(' ');
 
-            if (scanArea.includes('待機中')) {
-              console.log(`⏳ 【${acc.name}】現在のステータス: [待機中] (実行までしばらくお待ち下さい)`);
-              statusFound = true;
-              break; 
-            } else if (scanArea.includes('進行中')) {
-              console.log(`⚙️ 【${acc.name}】現在のステータス: [進行中]`);
-              statusFound = true;
-              break; 
-            } else if (scanArea.includes('完了') || scanArea.includes('.csv')) {
+            // 「キャンセル」の判定を最優先に行います
+            if (scanArea.includes('キャンセル') && !scanArea.includes('出力中') && !scanArea.includes('進行中')) {
+              throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
+            }
+            
+            // 進行中・完了・待機中の判定
+            if (scanArea.includes('完了') || scanArea.includes('.csv')) {
               console.log(`✅ 【${acc.name}】CSVの生成完了を確認しました！`);
               statusFound = true;
               isCompleted = true;
               break;
-            } else if (scanArea.includes('キャンセル')) {
-              throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
+            } else if (scanArea.includes('進行中')) {
+              // ⚙️ 「件数出力中 残り約xx分xx秒」の文字列パターンを柔軟に抽出
+              const matchDetail = scanArea.match(/\d+\/\d+件出力中\s*残り約\d+分\d+秒/);
+              // 万が一上記に完全一致しなくても「件数出力中」だけでも拾えるようにフォールバック
+              const fallbackMatch = matchDetail ? matchDetail[0] : (scanArea.match(/\d+\/\d+件出力中/) ? scanArea.match(/\d+\/\d+件出力中/)[0] : '');
+              
+              const detailLog = fallbackMatch ? ` (${fallbackMatch})` : '';
+              console.log(`⚙️ 【${acc.name}】現在のステータス: [進行中]${detailLog}`);
+              statusFound = true;
+              break; 
+            } else if (scanArea.includes('待機中')) {
+              console.log(`⏳ 【${acc.name}】現在のステータス: [待機中] (実行までしばらくお待ち下さい)`);
+              statusFound = true;
+              break; 
             }
           }
         }
@@ -414,6 +424,7 @@ async function downloadAndPrepareCSV(browser, acc) {
         }
 
       } catch (e) {
+        if (e.message.includes('キャンセル')) throw e;
         console.log(`⚠️ 【${acc.name}】監視ループ内で一時的なエラー（自動リロードと重複）: ${e.message}`);
       }
     }

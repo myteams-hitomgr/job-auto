@@ -362,65 +362,101 @@ async function downloadAndPrepareCSV(browser, acc) {
     const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約")').first();
     await exportBtn.waitFor({ state: 'visible', timeout: 30000 });
     await exportBtn.click({ force: true });
-    await page.waitForTimeout(8000);
+    
+    // 取出ボタンクリック後の待機時間を10秒に調整
+    await page.waitForTimeout(10000);
 
-    console.log(`👉 【${acc.name}】上部メニューの矢印ボタンにマウスを乗せます...`);
+    console.log(`👉 【${acc.name}】取出ファイル一覧画面へ安全に移動します...`);
     await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
 
-    console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
+    console.log(`⏳ 【${acc.name}】CSV抽出の完了を【10秒サイクル】で監視開始します...`);
     let loopCount = 1;
     const watchStartTime = Date.now(); 
 
     while (true) {
-      await page.waitForTimeout(5000);
+      // ⏱️ 10秒待機
+      await page.waitForTimeout(10000);
+
+      const currentUrl = page.url();
+      
+      // 💡 エラー画面（404等）に落ちていた場合のガード処理
+      if (currentUrl.includes('errors/notfounds') || currentUrl.includes('error')) {
+        console.log(`⚠️ 【監視ログ】現在エラー画面です。復旧を待つためページを再読み込みします... (チェック回数: ${loopCount})`);
+        await page.reload({ waitUntil: 'networkidle' }).catch(() => {});
+        
+        // リロードしてもエラー画面のままなら次のループへ
+        if (page.url().includes('errors/notfounds') || page.url().includes('error')) {
+          loopCount++;
+          continue;
+        }
+      }
+
+      // 🔄 通常画面であれば「最新を表示する」ボタンをクリックしてテーブルを能動的に更新する
+      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する")').first();
+      if (await refreshBtn.count() > 0 && await refreshBtn.isVisible()) {
+        await refreshBtn.click({ force: true }).catch(() => {});
+        await page.waitForLoadState('networkidle').catch(() => {});
+      } else {
+        // ボタンが見つからないか押せない場合は安全のためページ自体をリロード
+        await page.reload({ waitUntil: 'networkidle' }).catch(() => {});
+      }
+
+      // データテーブルの行を全走査
       const rows = await page.locator('table tr').all();
       let statusText = "";
       let detailText = "";
+      let isRowFound = false;
 
       for (const row of rows) {
         const cells = await row.locator('td').all();
         if (cells.length >= 4) {
           const dateText = await cells[0].evaluate(el => el.textContent || "");
+          // 当日（2026年）のデータ行をターゲットにする
           if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
             statusText = await cells[2].evaluate(el => el.textContent || "");
             detailText = await cells[3].evaluate(el => el.textContent || "");
+            isRowFound = true;
             break;
           }
         }
       }
 
-      if (statusText.length > 0 && (statusText.includes('キャンセル') || detailText.includes('キャンセル'))) {
+      // 行のデータがまだ正しくとれていない場合の状態表示
+      const displayStatus = isRowFound ? (statusText.trim() || "読み込み中") : "読み込み中";
+      let displayDetail = isRowFound ? (detailText.trim() || "データ収集中...") : "...";
+
+      // 〇〇/〇〇件 の文字列パターンがあれば進捗と予測時間をログに出す
+      const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
+      if (match) {
+        const currentCount = parseInt(match[1], 10);
+        const totalCount = parseInt(match[2], 10);
+        if (currentCount > 0 && totalCount > 0) {
+          const elapsed = (Date.now() - watchStartTime) / 1000;
+          const percent = ((currentCount / totalCount) * 100).toFixed(1);
+          const estimatedTotalTime = (elapsed / currentCount) * totalCount;
+          const remaining = Math.max(0, estimatedTotalTime - elapsed);
+          const rMin = Math.floor(remaining / 60);
+          const rSec = Math.floor(remaining % 60);
+          displayDetail = `${currentCount}/${totalCount}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
+        }
+      }
+
+      // 📢 フリーズ防止：毎ループ必ずリアルタイムの状態を出力する
+      console.log(`⏳ 【監視ログ】現在の状態: [${displayStatus}] ${displayDetail} (チェック回数: ${loopCount})`);
+
+      if (isRowFound && (statusText.includes('キャンセル') || detailText.includes('キャンセル'))) {
         throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
       }
 
-      if (statusText.includes('完了') || statusText.includes('成功') || detailText.includes('rec_recruitments')) {
+      if (isRowFound && (statusText.includes('完了') || statusText.includes('成功') || detailText.includes('rec_recruitments'))) {
         console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
         break;
       }
       
-      if (loopCount === 1 || loopCount % 6 === 0) {
-        const displayStatus = statusText.trim() || "読み込み中";
-        let displayDetail = detailText.trim() || "...";
-        const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
-        if (match) {
-          const currentCount = parseInt(match[1], 10);
-          const totalCount = parseInt(match[2], 10);
-          if (currentCount > 0 && totalCount > 0) {
-            const elapsed = (Date.now() - watchStartTime) / 1000;
-            const percent = ((currentCount / totalCount) * 100).toFixed(1);
-            const estimatedTotalTime = (elapsed / currentCount) * totalCount;
-            const remaining = Math.max(0, estimatedTotalTime - elapsed);
-            const rMin = Math.floor(remaining / 60);
-            const rSec = Math.floor(remaining % 60);
-            displayDetail = `${currentCount}/${totalCount}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
-          }
-        }
-        console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${displayStatus}] ${displayDetail}`);
-      }
       loopCount++;
     }
 
-    console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
+    console.log(`👉 【${acc.name}】最終読み込みのため2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
     const finalRows = await page.locator('table tr').all();
@@ -437,7 +473,7 @@ async function downloadAndPrepareCSV(browser, acc) {
     }
 
     if (!downloadLink) {
-      throw new Error("CSV of download link cannot be specified.");
+      throw new Error("CSVのダウンロードリンクを特定できませんでした。");
     }
 
     console.log(`👉 【${acc.name}】ダウンロードを開始します...`);

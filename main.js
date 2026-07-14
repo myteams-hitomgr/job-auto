@@ -369,101 +369,35 @@ async function downloadAndPrepareCSV(browser, acc) {
     await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", historySegment);
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
-    let loopCount = 1;
-    const watchStartTime = Date.now(); 
 
+    // 監視ループ (最上段の1行目のみをチェック)
     while (true) {
-      // 🌟 【対策1】テーブル本体、およびデータ本体が完全に描画されるまで少し長めに待つ
-      await page.waitForSelector('table tr, .table tr, tbody tr', { timeout: 10000 }).catch(() => {});
-      await page.waitForTimeout(1000);
+      try {
+        // tbody 内の一番上のデータ行 (tr) を特定
+        const firstRow = page.locator('tbody tr').first();
+        await firstRow.waitFor({ state: 'visible', timeout: 5000 });
 
-      // 非同期「読み込み中」表示が完全に消え去るまで待機（これによって無限「読み込み中」を回避）
-      const loadingOverlay = page.locator('div:has-text("読み込み中"), div:has-text("データを取得中"), .loading-overlay');
-      const isVisible = await loadingOverlay.count() > 0 && await loadingOverlay.first().isVisible();
-      if (isVisible) {
-        console.log(`⏳ 【${acc.name}】画面内に「読み込み中」のローディング表示を検出。消去を待ちます...`);
-        await page.waitForTimeout(3000);
-        continue;
-      }
+        const cells = await firstRow.locator('td').all();
+        if (cells.length >= 4) {
+          const statusText = (await cells[2].textContent() || "").trim();
+          const detailText = (await cells[3].textContent() || "").trim();
 
-      const rows = await page.locator('table tr, .table tr, tbody tr').all();
-      let statusText = "";
-      let detailText = "";
-      let isDataLoaded = false;
-
-      if (rows.length > 1) {
-        // 🌟 【対策2】1行目に「読み込み中」等のテキストが含まれている場合はまだ初期化途中とみなし、スルーする
-        const latestRow = rows[1];
-        const rowFullContent = (await latestRow.textContent() || "").trim();
-
-        if (rowFullContent.length > 0 && !rowFullContent.includes("読み込み中") && !rowFullContent.includes("データを取得中")) {
-          isDataLoaded = true;
-          const cells = await latestRow.locator('td').all();
-
-          if (cells.length >= 2) {
-            const firstCellText = (await cells[0].textContent() || "").trim();
-            
-            if (firstCellText.includes('2026') || firstCellText.includes('/') || firstCellText.includes(':') || firstCellText.length > 0) {
-              statusText = rowFullContent;
-              if (cells.length >= 3) {
-                statusText = (await cells[2].textContent() || "").trim();
-              }
-              if (cells.length >= 4) {
-                detailText = (await cells[3].textContent() || "").trim();
-              } else {
-                detailText = rowFullContent; 
-              }
-            }
+          if (statusText === '待機中') {
+            console.log(`⏳ 【${acc.name}】待機...`);
+          } else if (statusText === '進行中') {
+            console.log(`⚙️ 【${acc.name}】進捗表示: ${detailText}`);
+          } else if (statusText === '完了') {
+            console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
+            break; // 完了したらループを抜けて現在のダウンロード処理へ進む
+          } else {
+            console.log(`⚠️ 【${acc.name}】現在のステータス: [${statusText}] ${detailText}`);
           }
         }
+      } catch (e) {
+        console.log(`⚠️ 【${acc.name}】行情報の取得に失敗しました。再試行します...`);
       }
 
-      const cleanStatus = statusText.replace(/\s+/g, ' ');
-      const cleanDetail = detailText.replace(/\s+/g, ' ');
-
-      if (isDataLoaded && (cleanStatus.includes('キャンセル') || cleanDetail.includes('キャンセル'))) {
-        throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
-      }
-
-      const hasLink = isDataLoaded && (await rows[1].locator('a[href*=".csv"], a:has-text("ダウンロード"), button:has-text("ダウンロード"), a[href*="download"]').count()) > 0;
-      
-      // 進捗中か、完了かの厳密判定
-      const isProcessing = /読み込み中|作成中|準備中|処理中|待機中|未処理|インポート/.test(cleanStatus + cleanDetail) || !isDataLoaded;
-      const isSuccess = isDataLoaded && (cleanStatus.includes('完了') || cleanStatus.includes('成功') || cleanDetail.includes('rec_recruitments') || hasLink);
-
-      if (isSuccess && !isProcessing) {
-        console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
-        break;
-      }
-      
-      if (loopCount === 1 || loopCount % 6 === 0) {
-        const displayStatus = isDataLoaded ? (cleanStatus.slice(0, 30) || "読み込み中") : "データロード待ち";
-        let displayDetail = isDataLoaded ? cleanDetail.slice(0, 50) : "...";
-        
-        const match = displayDetail.match(/(\d+)\s*\/\s*(\d+)件/);
-        if (match) {
-          const currentCount = parseInt(match[1], 10);
-          const totalCount = parseInt(match[2], 10);
-          if (currentCount > 0 && totalCount > 0) {
-            const elapsed = (Date.now() - watchStartTime) / 1000;
-            const percent = ((currentCount / totalCount) * 100).toFixed(1);
-            const estimatedTotalTime = (elapsed / currentCount) * totalCount;
-            const remaining = Math.max(0, estimatedTotalTime - elapsed);
-            const rMin = Math.floor(remaining / 60);
-            const rSec = Math.floor(remaining % 60);
-            displayDetail = `${currentCount}/${totalCount}件出力中 残り約${rMin}分${rSec}秒 (${percent}%)`;
-          }
-        }
-        console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${displayStatus}] ${displayDetail}`);
-      }
-
-      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する"), a:has-text("更新"), button:has-text("更新")').first();
-      if (await refreshBtn.count() > 0) {
-        await refreshBtn.click({ force: true });
-        await page.waitForLoadState('networkidle').catch(() => {});
-      }
-
-      loopCount++;
+      // 「最新を表示する」は押さず、5秒待機
       await page.waitForTimeout(5000);
     }
 

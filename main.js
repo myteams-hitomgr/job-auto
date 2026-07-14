@@ -223,28 +223,6 @@ function processCSVFile(filePath, accountName) {
   return { normal: normalFiles, pv: pvFiles };
 }
 
-async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
-  const baseUrl = acc.url.endsWith('/login/') ? acc.url.slice(0, -7) : acc.url;
-  try {
-    const menuHoverIcon = page.locator('li:has(a:has-text("面接カレンダー")), ul.nav-tabs li:nth-child(5), .nav-tabs li a:has(img), li:has(.fa-refresh)').first();
-    if (await menuHoverIcon.count() > 0) {
-      await menuHoverIcon.hover();
-      await page.waitForTimeout(1500);
-      const subMenuLink = page.locator(`a:has-text("${targetText}")`).first();
-      if (await subMenuLink.count() > 0 && await subMenuLink.isVisible()) {
-        await subMenuLink.click();
-        await page.waitForLoadState('networkidle').catch(() => {});
-        await page.waitForTimeout(5000);
-        return;
-      }
-    }
-  } catch (err) {
-  }
-  const destinationUrl = `${baseUrl}/${targetUrlSegment}`;
-  await page.goto(destinationUrl, { waitUntil: 'networkidle' }).catch(() => {});
-  await page.waitForTimeout(5000);
-}
-
 async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   console.log(`👉 【${acc.name}】[${label}] 募集一覧画面へ移動します...`);
   const baseUrl = acc.url.endsWith('/login/') ? acc.url.slice(0, -7) : acc.url;
@@ -365,30 +343,27 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】「ファイル取出予約」を実行します（全求人対象）`);
     const exportBtn = page.locator('a:has-text("ファイル取出予約"), button:has-text("ファイル取出予約")').first();
     await exportBtn.waitFor({ state: 'visible', timeout: 30000 });
-    await exportBtn.click({ force: true });
     
-    // 💡 サーバーの過負荷・404バグを防ぐため、予約直後に「15秒間」完全にその場で待機します
-    console.log(`💤 サーバーの取り出し初期化を待つため、15秒間その場で待機します...`);
-    await page.waitForTimeout(15000);
+    // 💡 ボタンクリックで自動的に「取出ファイル一覧」画面へ行く仕様に合わせ、クリック後の遷移完了を待ちます
+    await exportBtn.click({ force: true });
+    console.log(`⏳ システムによる「取出ファイル一覧」への自動画面切り替えを待っています...`);
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(3000);
 
-    console.log(`👉 【${acc.name}】「取出ファイル一覧」画面へ移動します...`);
-    await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
-
-    console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
+    console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中（画面が切り替わったため、強制文字読み取りを開始します）...`);
     let loopCount = 1;
 
     while (true) {
-      // システム側の自動リロードの邪魔をしないように3秒待機
+      // 画面衝突を防ぐため、システム側の自動リロードを3秒間静かに待ちます
       await page.waitForTimeout(3000);
 
-      // 💡 万が一エラー画面（404）に弾かれた場合の鉄壁の復帰ルート
+      // 万が一弾かれて404エラー（errors/notfounds）になった場合の安全保険ルート
       if (page.url().includes('errors/notfounds')) {
-        console.log("⚠️ エラー画面を検知。ダッシュボード(ホーム)を経由して正規メニューから再侵入します...");
+        console.log("⚠️ エラー画面を検知。ダッシュボード経由で一覧へ再侵入します...");
         await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' }).catch(() => {});
-        await page.waitForTimeout(4000);
-        // メニュー経由で再度「取出ファイル一覧」へアプローチ
-        await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
-        continue;
+        await page.waitForTimeout(3000);
+        await page.goto(`${baseUrl}/rec_export_histories`, { waitUntil: 'networkidle' }).catch(() => {});
+        await page.waitForTimeout(3000);
       }
 
       const rowCount = await page.locator("table tbody tr").count();
@@ -410,8 +385,8 @@ async function downloadAndPrepareCSV(browser, acc) {
       const statusText  = (await cells.nth(2).textContent() || "").trim();
       const detailText  = (await cells.nth(3).textContent() || "").trim();
 
-      // 📢 リアルタイムの最新進捗情報を常時出力
-      console.log(`📢 【ヒトマネ最新進捗】[日時: ${requestTime}] | [ステータス: ${statusText}] | [詳細: ${detailText}]`);
+      // 📢 リクエスト日時の下の行を文字としてコンソールに強制出力！
+      console.log(`📢 【ヒトマネ進捗確認】日時: ${requestTime} | 状態: [${statusText}] | 詳細: ${detailText}`);
 
       fs.writeFileSync(
         `debug_${acc.name}.html`,
@@ -419,7 +394,7 @@ async function downloadAndPrepareCSV(browser, acc) {
         "utf8"
       );
 
-      // ステータスが「完了」「成功」になるか、詳細にダウンロードリンクが発生したらループ終了
+      // 完了またはダウンロードリンクが出現したらループを抜ける
       if (
         statusText.includes('完了') ||
         statusText.includes('成功') ||

@@ -370,36 +370,37 @@ async function downloadAndPrepareCSV(browser, acc) {
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中... (10秒インターバル監視)`);
 
-    // 🔄 監視ループのコアロジック
     while (true) {
       await page.waitForTimeout(10000);
 
       try {
-        // 「最新を表示する」ボタンがあればクリックして画面を確実にリロード
         const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する")').first();
         if (await refreshBtn.count() > 0) {
           await refreshBtn.click({ force: true }).catch(() => {});
           await page.waitForTimeout(1500);
         }
 
-        // 過去の行を絶対に巻き込まないよう、テーブルの「最初のデータ行（最新リクエスト）」だけをピンポイント抽出
-        const firstDataRow = page.locator('table tr:has(td)').first();
+        // 🎯 ヘッダー(th)を無視し、純粋な最初の「データ行(tdを持つtr)」を厳密に捕捉
+        const firstDataRow = page.locator('table.table tr:has(td), table tr:has(td)').first();
         if (await firstDataRow.count() === 0) {
           console.log(`❓ 【${acc.name}】テーブルデータ行が見つかりません。リロードを待ちます...`);
           continue;
         }
 
-        // 最新の1行だけの文字情報を取得
         const rowText = await firstDataRow.innerText().catch(() => "");
+        
+        // 空白行を掴んでしまった場合の安全対策
+        if (!rowText || rowText.trim().length < 5) {
+          console.log(`❓ 【${acc.name}】読み込んだデータが空、または短すぎます。リロードします...`);
+          continue;
+        }
 
-        // 1行目のステータスを判定
         if (rowText.includes('完了') || rowText.includes('.csv')) {
           console.log(`✅ 【${acc.name}】CSVの生成完了を確認しました！`);
-          break; // ループを抜けてダウンロードへ
+          break; 
         } 
         
         if (rowText.includes('進行中')) {
-          // 「件数出力中 残り約xx分xx秒」の文字列パターンを抽出
           const matchDetail = rowText.match(/\d+\/\d+件出力中\s*残り約\d+分\d+秒/);
           const fallbackMatch = matchDetail ? matchDetail[0] : (rowText.match(/\d+\/\d+件出力中/) ? rowText.match(/\d+\/\d+件出力中/)[0] : '');
           const detailLog = fallbackMatch ? ` (${fallbackMatch})` : '';
@@ -417,7 +418,8 @@ async function downloadAndPrepareCSV(browser, acc) {
           throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
         }
 
-        console.log(`❓ 【${acc.name}】ステータスを判定できませんでした。次の巡回を待ちます...`);
+        // 🔍 判定漏れが発生した際、実際に1行目から何が見えているのかを開発ログに完全出力
+        console.log(`❓ 【${acc.name}】ステータスを判定できませんでした。1行目の生データ: [${rowText.replace(/\n/g, ' ')}]`);
 
       } catch (e) {
         if (e.message.includes('キャンセル')) throw e;

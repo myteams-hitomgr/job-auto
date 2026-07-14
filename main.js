@@ -238,20 +238,23 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
     }
   } catch (err) {
   }
-  const destinationUrl = acc.url.replace('/login/', `/${targetUrlSegment}`);
+  // URL置換バグの修正: /login/ を削り、最後にターゲットセグメントを結合
+  const baseUrl = acc.url.endsWith('/login/') ? acc.url.slice(0, -7) : acc.url;
+  const destinationUrl = `${baseUrl}/${targetUrlSegment}`;
   await page.goto(destinationUrl, { waitUntil: 'networkidle' }).catch(() => {});
   await page.waitForTimeout(1500);
 }
 
 async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   console.log(`👉 【${acc.name}】[${label}] 募集一覧画面へ移動します...`);
-  const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
+  const baseUrl = acc.url.endsWith('/login/') ? acc.url.slice(0, -7) : acc.url;
+  const recruitUrl = `${baseUrl}/rec_recruitments`;
   await page.goto(recruitUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
 
   console.log(`👉 【${acc.name}】[${label}] 『ファイル取込予約』ボタンをクリックしてポップアップを開きます...`);
   const openModalBtn = page.locator('a:has-text("ファイル取込予約")').first();
   await openModalBtn.waitFor({ state: 'visible', timeout: 10000 });
-  await openModalBtn.click({ force: true });
+  openModalBtn.click({ force: true });
   
   await page.waitForTimeout(2000);
 
@@ -355,7 +358,8 @@ async function downloadAndPrepareCSV(browser, acc) {
     await page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    const recruitUrl = acc.url.replace('/login/', '/rec_recruitments');
+    const baseUrl = acc.url.endsWith('/login/') ? acc.url.slice(0, -7) : acc.url;
+    const recruitUrl = `${baseUrl}/rec_recruitments`;
     await page.goto(recruitUrl, { waitUntil: 'networkidle' });
 
     console.log(`👉 【${acc.name}】「ファイル取出予約」を実行します（全求人対象）`);
@@ -364,7 +368,7 @@ async function downloadAndPrepareCSV(browser, acc) {
     await exportBtn.click({ force: true });
     await page.waitForTimeout(8000);
 
-    console.log(`👉 【${acc.name}】上部メニューの矢印ボタンにマウスを乗せます...`);
+    console.log(`👉 【${acc.name}】「取出ファイル一覧」画面へ移動します...`);
     await navigateViaMenuOrUrl(page, acc, "取出ファイル一覧", "rec_export_histories");
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
@@ -374,9 +378,16 @@ async function downloadAndPrepareCSV(browser, acc) {
 
     while (true) {
       console.log(`🔄 while開始 (ループ回数: ${loopCount})`);
-      
-      // システム側の自動更新を考慮して5秒待機（page.reloadは行わない）
-      await page.waitForTimeout(5000);
+
+      // 「最新を表示する」ボタンがあればクリックして画面の表を更新する
+      const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する")').first();
+      if (await refreshBtn.count() > 0) {
+        console.log("👆 「最新を表示する」ボタンをクリックしてステータスを更新します...");
+        await refreshBtn.click({ force: true }).catch(() => {});
+        await page.waitForTimeout(4000); // 反映を少し待つ
+      } else {
+        await page.waitForTimeout(5000); // ボタンがない場合は5秒待機
+      }
 
       console.log("現在のURL:", page.url());
 
@@ -390,7 +401,7 @@ async function downloadAndPrepareCSV(browser, acc) {
       }
 
       const latestRow = page.locator("table tbody tr").first();
-      const cells = latestRow.locator("td"); // 💡 重複宣言を修正
+      const cells = latestRow.locator("td"); 
 
       if (await cells.count() < 4) {
         console.log("テーブルの列数が足りません。完了を待ちます。");
@@ -408,10 +419,12 @@ async function downloadAndPrepareCSV(browser, acc) {
         "utf8"
       );
 
+      // ステータスが「完了」または詳細にDLリンク（.csvやaタグ）が生成されたらループを抜ける
       if (
         statusText.includes('完了') ||
         statusText.includes('成功') ||
-        detailText.includes('rec_recruitments')
+        detailText.includes('rec_recruitments') ||
+        (await cells.nth(3).locator('a').count() > 0)
       ) {
         console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
         break;

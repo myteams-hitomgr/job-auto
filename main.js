@@ -238,7 +238,6 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
     }
   } catch (err) {
   }
-  // 【修正部分】 ログインURLの /login/ のみを取り除き、/rec_export_histories などのパスを正しく結合
   const destinationUrl = acc.url.replace(/\/login\/?$/, '') + '/' + targetUrlSegment;
   await page.goto(destinationUrl, { waitUntil: 'networkidle' }).catch(() => {});
   await page.waitForTimeout(1500);
@@ -246,7 +245,6 @@ async function navigateViaMenuOrUrl(page, acc, targetText, targetUrlSegment) {
 
 async function uploadSingleFileOnly(page, acc, fileToUpload, label) {
   console.log(`👉 【${acc.name}】[${label}] 募集一覧画面へ移動します...`);
-  // 【修正部分】 正しいURL階層（/72s3 や /lwf3）を維持したまま、募集一覧画面のURLを構成
   const recruitUrl = acc.url.replace(/\/login\/?$/, '') + '/rec_recruitments';
   await page.goto(recruitUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
 
@@ -357,7 +355,6 @@ async function downloadAndPrepareCSV(browser, acc) {
     await page.locator('button, input[type="submit"], .btn, a:has-text("ログイン")').first().click();
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    // 【修正部分】 正しいURL階層を維持したまま、募集一覧画面のURLを構成
     const recruitUrl = acc.url.replace(/\/login\/?$/, '') + '/rec_recruitments';
     await page.goto(recruitUrl, { waitUntil: 'networkidle' });
 
@@ -372,49 +369,70 @@ async function downloadAndPrepareCSV(browser, acc) {
 
     console.log(`⏳ 【${acc.name}】CSV抽出の完了を監視中...`);
     let loopCount = 1;
+    const startTime = Date.now();
+    const maxWaitTimeMs = 20 * 60 * 1000; // 安全のため20分で強制タイムアウト抜け
 
     while (true) {
-      // 🔄 「最新を表示する」ボタンをクリック
+      if (Date.now() - startTime > maxWaitTimeMs) {
+        throw new Error("⏳ CSV生成の監視が制限時間（20分）を超過したため強制終了しました。");
+      }
+
+      // 🔄 「最新を表示する」ボタンをクリック（DOM更新の確実なトリガー）
       const refreshBtn = page.locator('a:has-text("最新を表示する"), button:has-text("最新を表示する"), .btn:has-text("最新を表示する")').first();
       if (await refreshBtn.count() > 0) {
         await refreshBtn.click({ force: true });
-        // 🛑 時間を比較するのをやめ、DOM更新・通信完了を素直に2秒待つ（絶対フリーズしない）
+        // 通信完了を素直に待ち、キャッシュされたDOMツリーを破棄・再構築させる
         await page.waitForLoadState('networkidle').catch(() => {});
-        await page.waitForTimeout(2000);
+        await page.waitForTimeout(3000);
       }
 
-      // 🎯 最上行（ヘッダー下の1行目）のみを一択ターゲット
-      const latestRow = page.locator('table tr').nth(1);
+      // 【一発解決の核心】 毎ループ、常に新しいDOM要素としてテーブルの先頭行を取得し直す
+      const tableRows = await page.locator('table tr').all();
       
       let statusText = "";
       let detailText = "";
+      let hasDownloadLink = false;
 
-      if (await latestRow.count() > 0) {
+      if (tableRows.length > 1) {
+        const latestRow = tableRows[1]; // ヘッダーの次（1行目）
         const cells = await latestRow.locator('td').all();
+        
         if (cells.length >= 4) {
-          statusText = await cells[2].evaluate(el => el.textContent || "");
-          detailText = await cells[3].evaluate(el => el.textContent || "");
+          statusText = (await cells[2].textContent() || "").trim();
+          detailText = (await cells[3].textContent() || "").trim();
+          
+          // ダウンロード可能なリンク/ボタンが存在しているか直接チェック
+          const linkCount = await cells[3].locator('a[href*=".csv"], a:has-text("ダウンロード"), button:has-text("ダウンロード")').count();
+          if (linkCount > 0) {
+            hasDownloadLink = true;
+          }
         }
       }
 
-      const cleanStatus = statusText.trim();
-      const cleanDetail = detailText.trim();
+      // 判定用のクリーン文字列
+      const cleanStatus = statusText.replace(/\s+/g, ' ');
+      const cleanDetail = detailText.replace(/\s+/g, ' ');
 
       // キャンセル検知
       if (cleanStatus.includes('キャンセル') || cleanDetail.includes('キャンセル')) {
         throw new Error(`管理画面側で最新のリクエストが「キャンセル」されました。`);
       }
 
-      // 完了・成功検知
-      if (cleanStatus.includes('完了') || cleanStatus.includes('成功') || cleanDetail.includes('rec_recruitments')) {
-        console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！`);
+      // 【超堅牢完了判定】
+      // ステータスに「完了」「成功」がある、もしくはダウンロード用のリンクが検知できた、
+      // かつ、まだ「読み込み中」「作成中」「準備中」といった処理中ワードが残っていないことを絶対条件とする。
+      const isProcessing = /読み込み中|作成中|準備中|処理中|待機中|未処理|インポート/.test(cleanStatus + cleanDetail);
+      const isSuccess = cleanStatus.includes('完了') || cleanStatus.includes('成功') || hasDownloadLink || cleanDetail.includes('rec_recruitments');
+
+      if (isSuccess && !isProcessing) {
+        console.log(`✅ 【${acc.name}】最新の取出行でCSVの生成完了を確認しました！ (ステータス: [${cleanStatus}] / 詳細: [${cleanDetail}])`);
         break;
       }
       
-      // 待機中や進行中の状態をそのまま100%拾ってログに出す
+      // 生成進行状況のログ出力
       if (loopCount === 1 || loopCount % 4 === 0) {
         const displayStatus = cleanStatus || "読み込み中";
-        const displayDetail = cleanDetail.replace(/\s+/g, ' ') || "...";
+        const displayDetail = cleanDetail || "...";
         console.log(`⏳ 【${acc.name}】生成状況を監視中... 現在の状態: [${displayStatus}] ${displayDetail}`);
       }
       loopCount++;
@@ -424,9 +442,11 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    const finalLatestRow = page.locator('table tr').nth(1);
+    // 最新行から確実にダウンロードボタンを特定
+    const finalRows = await page.locator('table tr').all();
     let downloadLink = null;
-    if (await finalLatestRow.count() > 0) {
+    if (finalRows.length > 1) {
+      const finalLatestRow = finalRows[1];
       downloadLink = finalLatestRow.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
     }
 

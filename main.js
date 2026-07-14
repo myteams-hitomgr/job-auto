@@ -372,24 +372,23 @@ async function downloadAndPrepareCSV(browser, acc) {
 
     while (true) {
       await page.waitForTimeout(5000);
-      const rows = await page.locator('table tr').all();
+      
+      // 🎯 【最上行強制監視】ヘッダー(0番目)のすぐ下にある「最新データ行(1番目)」のみを決め打ちで取得
+      const latestRow = page.locator('table tr').nth(1);
+      
       let statusText = "";
       let detailText = "";
 
-      for (const row of rows) {
-        const cells = await row.locator('td').all();
+      if (await latestRow.count() > 0) {
+        const cells = await latestRow.locator('td').all();
         if (cells.length >= 4) {
-          const dateText = await cells[0].evaluate(el => el.textContent || "");
-          if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
-            statusText = await cells[2].evaluate(el => el.textContent || "");
-            detailText = await cells[3].evaluate(el => el.textContent || "");
-            break;
-          }
+          statusText = await cells[2].evaluate(el => el.textContent || "");
+          detailText = await cells[3].evaluate(el => el.textContent || "");
         }
       }
 
       if (statusText.length > 0 && (statusText.includes('キャンセル') || detailText.includes('キャンセル'))) {
-        throw new Error(`管理画面側でリクエストが「キャンセル」されました。`);
+        throw new Error(`管理画面側で最新のリクエストが「キャンセル」されました。`);
       }
 
       if (statusText.includes('完了') || statusText.includes('成功') || detailText.includes('rec_recruitments')) {
@@ -399,7 +398,6 @@ async function downloadAndPrepareCSV(browser, acc) {
       
       if (loopCount === 1 || loopCount % 6 === 0) {
         const displayStatus = statusText.trim() || "読み込み中";
-        // 管理画面側のテキスト（「残り約15分4秒」など）をそのまま取得して、不要な空白や改行を半角スペースに整形
         const displayDetail = (detailText.trim() || "...").replace(/\s+/g, ' ');
         
         console.log(`⏳ 【${acc.name}】自動更新を待ちながら生成状況をチェック中... 現在の状態: [${displayStatus}] ${displayDetail}`);
@@ -410,20 +408,14 @@ async function downloadAndPrepareCSV(browser, acc) {
     console.log(`👉 【${acc.name}】画面の切り替わりを2秒待機したあと、ダウンロードリンクを捕捉します...`);
     await page.waitForTimeout(2000); 
     
-    const finalRows = await page.locator('table tr').all();
+    // ダウンロード時も最新行（上から2番目のtr）から確実にリンクを取得
+    const finalLatestRow = page.locator('table tr').nth(1);
     let downloadLink = null;
-    for (const row of finalRows) {
-      const cells = await row.locator('td').all();
-      if (cells.length >= 4) {
-        const dateText = await cells[0].evaluate(el => el.textContent || "");
-        if (dateText.includes('2026') || dateText.includes('/') || dateText.includes(':')) {
-          downloadLink = row.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
-          break;
-        }
-      }
+    if (await finalLatestRow.count() > 0) {
+      downloadLink = finalLatestRow.locator('a[href*=".csv"], a:has-text("ダウンロード"), td a, td button').first();
     }
 
-    if (!downloadLink) {
+    if (!downloadLink || await downloadLink.count() === 0) {
       throw new Error("CSV of download link cannot be specified.");
     }
 
